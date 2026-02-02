@@ -1,5 +1,6 @@
 [workspace]
 members = ["client", "core", "service", "store"]
+default-members = ["service"]
 resolver = "2"
 
 [workspace.package]
