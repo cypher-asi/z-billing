@@ -15,20 +15,33 @@ A credit-based billing system for the Cypher Ecosystem and Zero Tech that handle
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    subgraph Crates[z-billing Workspace]
-        service[z-billing-service<br/>HTTP API Server]
-        store[z-billing-store<br/>RocksDB Persistence]
-        core[z-billing-core<br/>Domain Types]
-        client[z-billing-client<br/>HTTP Client Library]
-        lago[z-billing-lago<br/>Lago Docker Management]
-    end
-    
-    service --> store
-    service --> core
-    store --> core
-    client --> core
+```
+                        z-billing Workspace
+    ┌─────────────────────────────────────────────────────────────┐
+    │                                                             │
+    │  ┌─────────────────────┐      ┌─────────────────────┐       │
+    │  │  z-billing-service  │      │  z-billing-client   │       │
+    │  │   (HTTP API Server) │      │ (HTTP Client Lib)   │       │
+    │  └──────────┬──────────┘      └──────────┬──────────┘       │
+    │             │                            │                  │
+    │             ▼                            │                  │
+    │  ┌─────────────────────┐                 │                  │
+    │  │  z-billing-store    │                 │                  │
+    │  │ (RocksDB Persistence)│                │                  │
+    │  └──────────┬──────────┘                 │                  │
+    │             │                            │                  │
+    │             ▼                            ▼                  │
+    │          ┌─────────────────────────────────┐                │
+    │          │       z-billing-core            │                │
+    │          │        (Domain Types)           │                │
+    │          └─────────────────────────────────┘                │
+    │                                                             │
+    │  ┌─────────────────────┐                                    │
+    │  │   z-billing-lago    │                                    │
+    │  │ (Lago Docker Mgmt)  │                                    │
+    │  └─────────────────────┘                                    │
+    │                                                             │
+    └─────────────────────────────────────────────────────────────┘
 ```
 
 | Crate | Description |
