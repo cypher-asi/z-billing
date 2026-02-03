@@ -1,0 +1,62 @@
+[package]
+name = "z-billing-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "HTTP API service for z-billing"
+
+[[bin]]
+name = "z-billing-service"
+path = "src/main.rs"
+
+[features]
+default = []
+# Enable test-token authentication bypass for integration testing.
+# WARNING: Do not enable this feature in production builds.
+test-auth = []
+
+[dependencies]
+# Internal crates
+z-billing-core = { path = "../z-billing-core" }
+z-billing-store = { path = "../z-billing-store" }
+
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+tower = { version = "0.4", features = ["limit"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "limit", "timeout"] }
+
+# Async runtime
+tokio.workspace = true
+futures.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# HTTP client (for Lago/Stripe)
+reqwest = { workspace = true }
+
+# Authentication
+jsonwebtoken = { workspace = true }
+
+# Utilities
+thiserror.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { workspace = true }
+
+# Crypto (for Stripe webhook signature verification)
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+axum-test = "15"
+
+[lints]
+workspace = true
