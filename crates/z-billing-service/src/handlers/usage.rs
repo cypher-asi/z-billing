@@ -8,8 +8,8 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use z_billing_core::{
-    AgentId, CreditTransaction, LlmProvider, TokenDirection, UsageEvent, UsageMetric, UsageSource,
-    UserId,
+    Account, AgentId, CreditTransaction, LlmProvider, TokenDirection, UsageEvent, UsageMetric,
+    UsageSource, UserId,
 };
 use z_billing_store::Store;
 
@@ -17,6 +17,19 @@ use crate::auth::ServiceAuth;
 use crate::error::ApiError;
 use crate::state::AppState;
 use crate::stripe::StripeClient;
+
+/// Get an account by user ID, creating it with zero balance if it doesn't exist.
+fn get_or_create_account(store: &dyn Store, user_id: &UserId) -> Result<Account, ApiError> {
+    if let Some(account) = store.get_account(user_id)? {
+        return Ok(account);
+    }
+
+    // Auto-create account with zero balance
+    let account = Account::new(*user_id);
+    store.put_account(&account)?;
+    tracing::info!(user_id = %user_id, "Auto-created billing account");
+    Ok(account)
+}
 
 // ============================================================================
 // Constants
@@ -145,11 +158,8 @@ pub async fn report_usage(
         metadata: body.metadata.clone(),
     };
 
-    // Get current balance for transaction record
-    let account = state
-        .store
-        .get_account(&user_id)?
-        .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
+    // Get or create account
+    let account = get_or_create_account(state.store.as_ref(), &user_id)?;
 
     let new_balance = account.balance_cents - cost_cents;
 
@@ -296,10 +306,7 @@ pub async fn check_balance(
         .parse()
         .map_err(|_| ApiError::BadRequest("Invalid user ID".into()))?;
 
-    let account = state
-        .store
-        .get_account(&user_id)?
-        .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
+    let account = get_or_create_account(state.store.as_ref(), &user_id)?;
 
     Ok(Json(CheckBalanceResponse {
         sufficient: account.balance_cents >= body.required_cents,
