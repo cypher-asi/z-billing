@@ -40,6 +40,9 @@ reqwest = { workspace = true }
 # Authentication
 jsonwebtoken = { workspace = true }
 
+# Database (for PostgreSQL migrations in main.rs)
+sqlx = { workspace = true }
+
 # Utilities
 thiserror.workspace = true
 async-trait.workspace = true

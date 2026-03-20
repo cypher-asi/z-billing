@@ -11,7 +11,7 @@ use z_billing_core::{
     AgentId, CreditTransaction, LlmProvider, TokenDirection, UsageEvent, UsageMetric, UsageSource,
     UserId,
 };
-use z_billing_store::{RocksStore, Store};
+use z_billing_store::Store;
 
 use crate::auth::ServiceAuth;
 use crate::error::ApiError;
@@ -173,7 +173,13 @@ pub async fn report_usage(
     maybe_trigger_auto_refill(&state, &account, user_id, balance);
 
     // Forward to Lago for analytics (async, non-blocking, with retries)
-    maybe_forward_to_lago(&state, &body.event_id, user_id, agent_id_str.as_deref(), &body.metric);
+    maybe_forward_to_lago(
+        &state,
+        &body.event_id,
+        user_id,
+        agent_id_str.as_deref(),
+        &body.metric,
+    );
 
     Ok(Json(UsageResponse {
         success: true,
@@ -364,14 +370,9 @@ fn maybe_forward_to_lago(
     let metric = metric.clone();
 
     tokio::spawn(async move {
-        if let Err(e) = forward_to_lago_with_retry(
-            &lago,
-            &event_id,
-            &user_id_str,
-            agent_id.as_deref(),
-            &metric,
-        )
-        .await
+        if let Err(e) =
+            forward_to_lago_with_retry(&lago, &event_id, &user_id_str, agent_id.as_deref(), &metric)
+                .await
         {
             tracing::error!(
                 event_id = %event_id,
@@ -542,7 +543,7 @@ async fn forward_to_lago_with_retry(
             Ok(()) => return Ok(()),
             Err(e) => {
                 attempt += 1;
-                
+
                 if attempt >= LAGO_MAX_RETRIES {
                     tracing::warn!(
                         event_id = %event_id,
@@ -562,7 +563,7 @@ async fn forward_to_lago_with_retry(
                 );
 
                 tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-                
+
                 // Exponential backoff with cap
                 backoff_ms = (backoff_ms * 2).min(LAGO_MAX_BACKOFF_MS);
             }
@@ -624,7 +625,7 @@ async fn forward_to_lago(
 /// refill amount.
 async fn trigger_auto_refill(
     stripe: Option<&StripeClient>,
-    store: &RocksStore,
+    store: &dyn Store,
     user_id: UserId,
     customer_id: Option<String>,
     amount_cents: i64,

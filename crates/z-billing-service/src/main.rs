@@ -1,13 +1,13 @@
 //! Z-Billing Service - HTTP API for Z Credits and Billing
 //!
 //! This is the main entry point for the z-billing service.
+//! Supports PostgreSQL (preferred) or RocksDB as the storage backend.
 
 use std::sync::Arc;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use z_billing_service::{create_router, AppState, ServiceConfig};
-use z_billing_store::RocksStore;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -27,16 +27,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(
         listen_addr = %config.listen_addr,
-        data_dir = %config.data_dir,
+        database = if config.database_url.is_some() { "postgresql" } else { "rocksdb" },
         lago_configured = %config.lago_api_url.is_some(),
-        lago_org_id = ?config.lago_organization_id,
         stripe_configured = %config.stripe_api_key.is_some(),
         "Service configuration loaded"
     );
 
-    // Initialize RocksDB store
-    tracing::info!(path = %config.data_dir, "Opening RocksDB store");
-    let store = Arc::new(RocksStore::open(&config.data_dir)?);
+    // Initialize store based on configuration
+    let store: Arc<dyn z_billing_store::Store> = if let Some(ref database_url) = config.database_url
+    {
+        tracing::info!("Connecting to PostgreSQL");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(20)
+            .connect(database_url)
+            .await?;
+
+        tracing::info!("Running database migrations");
+        sqlx::migrate!("../z-billing-store/migrations")
+            .run(&pool)
+            .await?;
+        tracing::info!("Migrations complete");
+
+        Arc::new(z_billing_store::PgStore::new(pool))
+    } else {
+        tracing::info!(path = %config.data_dir, "Opening RocksDB store");
+        Arc::new(z_billing_store::RocksStore::open(&config.data_dir)?)
+    };
 
     // Build app state
     let state = AppState::new(store, config.clone());

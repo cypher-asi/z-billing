@@ -10,7 +10,10 @@ pub struct ServiceConfig {
     /// Address to listen on (default: "0.0.0.0:8080").
     pub listen_addr: String,
 
-    /// Path to `RocksDB` data directory (default: "/data/z-billing").
+    /// PostgreSQL connection string (preferred over RocksDB).
+    pub database_url: Option<String>,
+
+    /// Path to `RocksDB` data directory (fallback if DATABASE_URL not set).
     pub data_dir: String,
 
     /// ZID JWT validation base URL (default: `<https://zid.zero.tech>`).
@@ -91,6 +94,7 @@ impl ServiceConfig {
 
         Self {
             listen_addr: std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into()),
+            database_url: std::env::var("DATABASE_URL").ok().filter(|s| !s.is_empty()),
             data_dir: std::env::var("DATA_DIR").unwrap_or_else(|_| "/data/z-billing".into()),
             auth_base_url: std::env::var("AUTH_BASE_URL")
                 .unwrap_or_else(|_| "https://zid.zero.tech".into()),
@@ -124,7 +128,12 @@ impl ServiceConfig {
 }
 
 /// Load Lago secrets from file or environment.
-fn load_lago_secrets() -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+fn load_lago_secrets() -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
     // Try multiple paths for the secrets file
     let secret_paths = [
         ".secrets/lago.json",
@@ -195,14 +204,19 @@ fn load_secrets_file<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, st
     }
     let contents = std::fs::read_to_string(path_obj)
         .map_err(|e| std::io::Error::new(e.kind(), format!("reading {path}: {e}")))?;
-    serde_json::from_str(&contents)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("parsing {path}: {e}")))
+    serde_json::from_str(&contents).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("parsing {path}: {e}"),
+        )
+    })
 }
 
 impl Default for ServiceConfig {
     fn default() -> Self {
         Self {
             listen_addr: "0.0.0.0:8080".into(),
+            database_url: None,
             data_dir: "/data/z-billing".into(),
             auth_base_url: "https://zid.zero.tech".into(),
             auth_audience: "z-billing".into(),

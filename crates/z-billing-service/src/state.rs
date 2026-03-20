@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use z_billing_store::RocksStore;
+use z_billing_store::Store;
 
 use crate::config::ServiceConfig;
 use crate::lago::LagoClient;
@@ -11,8 +11,8 @@ use crate::stripe::StripeClient;
 /// Application state shared across handlers.
 #[derive(Clone)]
 pub struct AppState {
-    /// The storage backend.
-    pub store: Arc<RocksStore>,
+    /// The storage backend (RocksDB or PostgreSQL).
+    pub store: Arc<dyn Store>,
 
     /// Service configuration.
     pub config: ServiceConfig,
@@ -27,22 +27,20 @@ pub struct AppState {
 impl AppState {
     /// Create a new application state.
     #[must_use]
-    pub fn new(store: Arc<RocksStore>, config: ServiceConfig) -> Self {
+    pub fn new(store: Arc<dyn Store>, config: ServiceConfig) -> Self {
         // Create Lago client if configured
         let lago = config
             .lago_api_url
             .as_ref()
             .zip(config.lago_api_key.as_ref())
-            .and_then(|(url, key)| {
-                match LagoClient::new(url, key) {
-                    Ok(client) => {
-                        tracing::info!(lago_url = %url, "Lago integration enabled");
-                        Some(Arc::new(client))
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to create Lago client");
-                        None
-                    }
+            .and_then(|(url, key)| match LagoClient::new(url, key) {
+                Ok(client) => {
+                    tracing::info!(lago_url = %url, "Lago integration enabled");
+                    Some(Arc::new(client))
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to create Lago client");
+                    None
                 }
             });
 
