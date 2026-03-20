@@ -50,8 +50,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Arc::new(z_billing_store::PgStore::new(pool))
     } else {
-        tracing::info!(path = %config.data_dir, "Opening RocksDB store");
-        Arc::new(z_billing_store::RocksStore::open(&config.data_dir)?)
+        #[cfg(feature = "rocksdb-backend")]
+        {
+            tracing::info!(path = %config.data_dir, "Opening RocksDB store");
+            Arc::new(z_billing_store::RocksStore::open(&config.data_dir)?)
+        }
+        #[cfg(not(feature = "rocksdb-backend"))]
+        {
+            return Err("DATABASE_URL is required (RocksDB backend not compiled)".into());
+        }
     };
 
     // Build app state

@@ -6,13 +6,17 @@ license.workspace = true
 authors.workspace = true
 description = "Storage layer for z-billing (PostgreSQL and RocksDB backends)"
 
+[features]
+default = ["rocksdb-backend"]
+rocksdb-backend = ["dep:rocksdb", "dep:ciborium"]
+
 [dependencies]
 z-billing-core = { path = "../z-billing-core" }
-rocksdb = { workspace = true }
+rocksdb = { workspace = true, optional = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-ciborium = { workspace = true }
+ciborium = { workspace = true, optional = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }

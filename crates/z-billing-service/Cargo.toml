@@ -15,11 +15,13 @@ default = []
 # Enable test-token authentication bypass for integration testing.
 # WARNING: Do not enable this feature in production builds.
 test-auth = []
+# Enable RocksDB storage backend (requires libclang at build time).
+rocksdb-backend = ["z-billing-store/rocksdb-backend"]
 
 [dependencies]
 # Internal crates
 z-billing-core = { path = "../z-billing-core" }
-z-billing-store = { path = "../z-billing-store" }
+z-billing-store = { path = "../z-billing-store", default-features = false }
 
 # Web framework
 axum = { version = "0.7", features = ["macros"] }

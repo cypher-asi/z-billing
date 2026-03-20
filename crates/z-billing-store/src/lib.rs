@@ -35,13 +35,19 @@
 #![warn(clippy::pedantic)]
 
 pub mod error;
-pub mod keys;
 pub mod postgres;
+
+#[cfg(feature = "rocksdb-backend")]
+pub mod keys;
+#[cfg(feature = "rocksdb-backend")]
 pub mod rocks;
+#[cfg(feature = "rocksdb-backend")]
 pub mod schema;
 
 pub use error::{Result, StoreError};
 pub use postgres::PgStore;
+
+#[cfg(feature = "rocksdb-backend")]
 pub use rocks::RocksStore;
 
 use z_billing_core::{Account, CreditTransaction, TransactionId, UsageEvent, UserId};
