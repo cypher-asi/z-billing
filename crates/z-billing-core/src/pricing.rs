@@ -28,74 +28,56 @@ impl Default for PricingConfig {
     fn default() -> Self {
         let mut llm_pricing = HashMap::new();
 
-        // Anthropic models
-        llm_pricing.insert(
-            ModelKey::new("anthropic", "claude-3-5-sonnet"),
-            LlmPricing {
-                input_credits_per_million: 300,   // $3.00 per 1M input tokens
-                output_credits_per_million: 1500, // $15.00 per 1M output tokens
-            },
-        );
-        llm_pricing.insert(
-            ModelKey::new("anthropic", "claude-3-5-sonnet-20241022"),
-            LlmPricing {
-                input_credits_per_million: 300,
-                output_credits_per_million: 1500,
-            },
-        );
-        llm_pricing.insert(
-            ModelKey::new("anthropic", "claude-3-haiku"),
-            LlmPricing {
-                input_credits_per_million: 25,   // $0.25 per 1M
-                output_credits_per_million: 125, // $1.25 per 1M
-            },
-        );
-        llm_pricing.insert(
-            ModelKey::new("anthropic", "claude-3-opus"),
-            LlmPricing {
-                input_credits_per_million: 1500,  // $15.00 per 1M
-                output_credits_per_million: 7500, // $75.00 per 1M
-            },
-        );
+        // Anthropic models — current (Claude 4.x)
+        let sonnet_pricing = LlmPricing {
+            input_credits_per_million: 300,   // $3.00 per 1M input tokens
+            output_credits_per_million: 1500, // $15.00 per 1M output tokens
+        };
+        let opus_pricing = LlmPricing {
+            input_credits_per_million: 500,   // $5.00 per 1M
+            output_credits_per_million: 2500, // $25.00 per 1M
+        };
+        let haiku_pricing = LlmPricing {
+            input_credits_per_million: 100, // $1.00 per 1M
+            output_credits_per_million: 500, // $5.00 per 1M
+        };
+
+        // Current model IDs
+        llm_pricing.insert(ModelKey::new("anthropic", "claude-sonnet-4-6"), sonnet_pricing.clone());
+        llm_pricing.insert(ModelKey::new("anthropic", "claude-opus-4-6"), opus_pricing.clone());
+        llm_pricing.insert(ModelKey::new("anthropic", "claude-haiku-4-5-20251001"), haiku_pricing.clone());
+
+        // Legacy model IDs (backward compatibility)
+        llm_pricing.insert(ModelKey::new("anthropic", "claude-3-5-sonnet"), sonnet_pricing.clone());
+        llm_pricing.insert(ModelKey::new("anthropic", "claude-3-5-sonnet-20241022"), sonnet_pricing);
+        llm_pricing.insert(ModelKey::new("anthropic", "claude-3-haiku"), LlmPricing {
+            input_credits_per_million: 25,
+            output_credits_per_million: 125,
+        });
+        llm_pricing.insert(ModelKey::new("anthropic", "claude-3-opus"), LlmPricing {
+            input_credits_per_million: 1500,
+            output_credits_per_million: 7500,
+        });
 
         // OpenAI models
-        llm_pricing.insert(
-            ModelKey::new("openai", "gpt-4-turbo"),
-            LlmPricing {
-                input_credits_per_million: 1000,  // $10.00 per 1M
-                output_credits_per_million: 3000, // $30.00 per 1M
-            },
-        );
-        llm_pricing.insert(
-            ModelKey::new("openai", "gpt-4o"),
-            LlmPricing {
-                input_credits_per_million: 250,   // $2.50 per 1M
-                output_credits_per_million: 1000, // $10.00 per 1M
-            },
-        );
-        llm_pricing.insert(
-            ModelKey::new("openai", "gpt-4o-mini"),
-            LlmPricing {
-                input_credits_per_million: 15,  // $0.15 per 1M
-                output_credits_per_million: 60, // $0.60 per 1M
-            },
-        );
+        llm_pricing.insert(ModelKey::new("openai", "gpt-4o"), LlmPricing {
+            input_credits_per_million: 250,
+            output_credits_per_million: 1000,
+        });
+        llm_pricing.insert(ModelKey::new("openai", "gpt-4o-mini"), LlmPricing {
+            input_credits_per_million: 15,
+            output_credits_per_million: 60,
+        });
 
         // Google models
-        llm_pricing.insert(
-            ModelKey::new("google", "gemini-1.5-pro"),
-            LlmPricing {
-                input_credits_per_million: 125,  // $1.25 per 1M
-                output_credits_per_million: 500, // $5.00 per 1M
-            },
-        );
-        llm_pricing.insert(
-            ModelKey::new("google", "gemini-1.5-flash"),
-            LlmPricing {
-                input_credits_per_million: 8,   // $0.08 per 1M
-                output_credits_per_million: 30, // $0.30 per 1M
-            },
-        );
+        llm_pricing.insert(ModelKey::new("google", "gemini-2.5-pro"), LlmPricing {
+            input_credits_per_million: 125,
+            output_credits_per_million: 500,
+        });
+        llm_pricing.insert(ModelKey::new("google", "gemini-2.5-flash"), LlmPricing {
+            input_credits_per_million: 8,
+            output_credits_per_million: 30,
+        });
 
         Self {
             z_credit_rate_usd: 0.01,
@@ -216,6 +198,13 @@ mod tests {
         assert_eq!(config.z_credit_rate_usd, 0.01);
         assert!(config
             .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "claude-sonnet-4-6")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "claude-opus-4-6")));
+        // Legacy models still present
+        assert!(config
+            .llm_pricing
             .contains_key(&ModelKey::new("anthropic", "claude-3-5-sonnet")));
     }
 
@@ -223,10 +212,10 @@ mod tests {
     fn calculate_llm_cost_claude() {
         let config = PricingConfig::default();
 
-        // Claude 3.5 Sonnet: 300 credits/1M input, 1500 credits/1M output
+        // Claude Sonnet 4.6: 300 credits/1M input, 1500 credits/1M output
         // 10,000 input tokens = 3 credits
         // 5,000 output tokens = 7.5 -> 7 credits
-        let cost = config.calculate_llm_cost("anthropic", "claude-3-5-sonnet", 10_000, 5_000);
+        let cost = config.calculate_llm_cost("anthropic", "claude-sonnet-4-6", 10_000, 5_000);
         assert_eq!(cost, 10); // 3 + 7 = 10
     }
 
@@ -235,7 +224,7 @@ mod tests {
         let config = PricingConfig::default();
 
         // Very small usage should still cost at least 1 credit
-        let cost = config.calculate_llm_cost("anthropic", "claude-3-5-sonnet", 100, 50);
+        let cost = config.calculate_llm_cost("anthropic", "claude-sonnet-4-6", 100, 50);
         assert_eq!(cost, 1);
     }
 
