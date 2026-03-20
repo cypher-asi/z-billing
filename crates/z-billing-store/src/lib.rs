@@ -36,10 +36,12 @@
 
 pub mod error;
 pub mod keys;
+pub mod postgres;
 pub mod rocks;
 pub mod schema;
 
 pub use error::{Result, StoreError};
+pub use postgres::PgStore;
 pub use rocks::RocksStore;
 
 use z_billing_core::{Account, CreditTransaction, TransactionId, UsageEvent, UserId};

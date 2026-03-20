@@ -29,6 +29,7 @@ jsonwebtoken = "9"
 
 # Database
 rocksdb = "0.22"
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "migrate"] }
 
 # Utilities
 thiserror = "1"
