@@ -16,11 +16,14 @@ pub struct ServiceConfig {
     /// Path to `RocksDB` data directory (fallback if DATABASE_URL not set).
     pub data_dir: String,
 
-    /// ZID JWT validation base URL (default: `<https://zid.zero.tech>`).
+    /// Auth0 / ZID domain for JWKS RS256 validation.
     pub auth_base_url: String,
 
     /// Expected JWT audience (default: "z-billing").
     pub auth_audience: String,
+
+    /// Shared secret for HS256 token validation (same as aura-network/zOS).
+    pub auth_cookie_secret: Option<String>,
 
     /// Service API key for service-to-service auth.
     pub service_api_key: Option<String>,
@@ -99,6 +102,9 @@ impl ServiceConfig {
             auth_base_url: std::env::var("AUTH_BASE_URL")
                 .unwrap_or_else(|_| "https://zid.zero.tech".into()),
             auth_audience: std::env::var("AUTH_AUDIENCE").unwrap_or_else(|_| "z-billing".into()),
+            auth_cookie_secret: std::env::var("AUTH_COOKIE_SECRET")
+                .ok()
+                .filter(|s| !s.is_empty()),
             service_api_key: std::env::var("SERVICE_API_KEY").ok(),
             admin_api_key: std::env::var("ADMIN_API_KEY").ok(),
             lago_api_url,
@@ -220,6 +226,7 @@ impl Default for ServiceConfig {
             data_dir: "/data/z-billing".into(),
             auth_base_url: "https://zid.zero.tech".into(),
             auth_audience: "z-billing".into(),
+            auth_cookie_secret: None,
             service_api_key: None,
             admin_api_key: None,
             lago_api_url: None,

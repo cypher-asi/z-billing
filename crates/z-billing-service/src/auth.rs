@@ -85,17 +85,17 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
                 });
             }
 
-            // Validate JWT against JWKS
+            // Validate JWT (RS256 or HS256)
             let claims = validate_jwt(token, state).await?;
 
-            let user_id = claims
-                .sub
+            let user_id_str = claims.user_id().ok_or(ApiError::Unauthorized)?;
+            let user_id = user_id_str
                 .parse::<UserId>()
                 .map_err(|_| ApiError::Unauthorized)?;
 
             Ok(AuthUser {
                 user_id,
-                subject: claims.sub,
+                subject: user_id_str.to_string(),
             })
         })
     }
@@ -222,23 +222,38 @@ impl FromRequestParts<Arc<AppState>> for AdminAuth {
     }
 }
 
-/// JWT claims structure for ZID tokens.
+/// The KID used by zOS self-signed HS256 tokens.
+/// Must match the value used by aura-network and zero-payments-server.
+const SELF_SIGNED_KID: &str = "jFNXMnFjGrSoDafnLQBohoCNalWcFcTjnKEbkRzWFBHyYJFikdLMHP";
+
+/// JWT claims structure for ZID/zOS tokens.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtClaims {
-    /// Subject (user ID).
-    pub sub: String,
+    /// User ID (UUID format, present in zOS HS256 tokens).
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Subject (auth0|... for RS256, or UUID for some tokens).
+    #[serde(default)]
+    pub sub: Option<String>,
     /// Audience (can be string or array).
     #[serde(default)]
     pub aud: Option<serde_json::Value>,
     /// Issuer.
-    pub iss: String,
+    #[serde(default)]
+    pub iss: Option<String>,
     /// Expiration time.
-    pub exp: i64,
+    #[serde(default)]
+    pub exp: Option<i64>,
     /// Issued at.
-    pub iat: i64,
-    /// Key ID (from header, not claims).
-    #[serde(skip)]
-    pub kid: Option<String>,
+    #[serde(default)]
+    pub iat: Option<i64>,
+}
+
+impl JwtClaims {
+    /// Get the user ID, preferring `id` field over `sub`.
+    pub fn user_id(&self) -> Option<&str> {
+        self.id.as_deref().or(self.sub.as_deref())
+    }
 }
 
 // ============================================================================
@@ -315,7 +330,10 @@ fn get_jwks_cache() -> &'static RwLock<JwksCache> {
     JWKS_CACHE.get_or_init(|| RwLock::new(JwksCache::new()))
 }
 
-/// Validate a JWT token against the JWKS.
+/// Validate a JWT token — supports both RS256 (JWKS) and HS256 (shared secret).
+///
+/// HS256 tokens from zOS use a specific KID (`SELF_SIGNED_KID`). All other tokens
+/// are validated via RS256 JWKS, matching the pattern from aura-network.
 async fn validate_jwt(token: &str, state: &AppState) -> Result<JwtClaims, ApiError> {
     // Decode the header to get the key ID
     let header = decode_header(token).map_err(|e| {
@@ -323,19 +341,51 @@ async fn validate_jwt(token: &str, state: &AppState) -> Result<JwtClaims, ApiErr
         ApiError::Unauthorized
     })?;
 
-    let kid = header.kid.clone();
+    let kid = header.kid.as_deref().unwrap_or("");
 
-    // Get the decoding key from cache or fetch JWKS
-    let decoding_key = get_decoding_key(kid.as_deref(), state).await?;
+    // Check for HS256 self-signed tokens (same pattern as aura-network)
+    if kid == SELF_SIGNED_KID {
+        return validate_hs256(token, state);
+    }
 
-    // Set up validation
+    // RS256 path — validate via JWKS
+    let decoding_key = get_decoding_key(Some(kid), state).await?;
+
     let mut validation = Validation::new(Algorithm::RS256);
     validation.set_audience(&[&state.config.auth_audience]);
     validation.set_issuer(&[&state.config.auth_base_url]);
 
-    // Decode and validate the token
     let token_data = decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| {
-        tracing::debug!(error = %e, "JWT validation failed");
+        tracing::debug!(error = %e, "RS256 JWT validation failed");
+        ApiError::Unauthorized
+    })?;
+
+    Ok(token_data.claims)
+}
+
+/// Validate an HS256 self-signed token from zOS.
+///
+/// These tokens use a shared secret (AUTH_COOKIE_SECRET) and may not include
+/// standard claims like exp/aud — matches aura-network's behavior.
+fn validate_hs256(token: &str, state: &AppState) -> Result<JwtClaims, ApiError> {
+    let secret = state
+        .config
+        .auth_cookie_secret
+        .as_ref()
+        .ok_or_else(|| {
+            tracing::debug!("HS256 token received but AUTH_COOKIE_SECRET not configured");
+            ApiError::Unauthorized
+        })?;
+
+    let key = DecodingKey::from_secret(secret.as_bytes());
+    let mut validation = Validation::new(Algorithm::HS256);
+    // zOS self-signed tokens may not include exp/iat claims
+    validation.validate_exp = false;
+    validation.validate_aud = false;
+    validation.required_spec_claims.clear();
+
+    let token_data = decode::<JwtClaims>(token, &key, &validation).map_err(|e| {
+        tracing::debug!(error = %e, "HS256 JWT validation failed");
         ApiError::Unauthorized
     })?;
 
@@ -372,7 +422,9 @@ async fn get_decoding_key(kid: Option<&str>, state: &AppState) -> Result<Decodin
     for jwk in &jwks.keys {
         if let Some(decoding_key) = jwk_to_decoding_key(jwk) {
             if let Some(ref key_kid) = jwk.kid {
-                cache_write.keys.insert(key_kid.clone(), decoding_key.clone());
+                cache_write
+                    .keys
+                    .insert(key_kid.clone(), decoding_key.clone());
             }
             // Set first key as default
             if cache_write.default_key.is_none() {
@@ -389,7 +441,10 @@ async fn get_decoding_key(kid: Option<&str>, state: &AppState) -> Result<Decodin
             .cloned()
             .ok_or(ApiError::Unauthorized)
     } else {
-        cache_write.default_key.clone().ok_or(ApiError::Unauthorized)
+        cache_write
+            .default_key
+            .clone()
+            .ok_or(ApiError::Unauthorized)
     }
 }
 
