@@ -1,56 +1,70 @@
-# Z-Billing
+<h1 align="center">z-billing</h1>
 
-A credit-based billing system for the Cypher Ecosystem and Zero Tech that handles usage tracking, subscription management, and payment processing. Users purchase and spend Z Credits for LLM inference, compute resources, and API calls.
+<p align="center">
+  <b>Credit-based billing system for the AURA platform.</b>
+</p>
 
-## Features
+## Overview
 
-- Z Credit system (1 credit = $0.01)
-- Account and balance management
-- Subscription plans (Free, Standard, Pro, Enterprise)
-- Usage-based billing (LLM tokens, compute, API calls)
-- Stripe integration for payments
-- Lago integration for analytics
-- Auto-refill functionality
-- Service-to-service API for usage reporting
+z-billing is the billing service for AURA. It handles credit accounts, usage-based billing, and payment processing. Users purchase Z Credits which are spent on LLM inference, compute resources, and API calls. aura-router calls z-billing to check balances and debit credits on every LLM request.
 
-## Architecture
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Rust 1.75+
+- PostgreSQL 15+
+
+### Setup
 
 ```
-                        z-billing Workspace
-    ┌─────────────────────────────────────────────────────────────┐
-    │                                                             │
-    │  ┌─────────────────────┐      ┌─────────────────────┐       │
-    │  │  z-billing-service  │      │  z-billing-client   │       │
-    │  │   (HTTP API Server) │      │ (HTTP Client Lib)   │       │
-    │  └──────────┬──────────┘      └──────────┬──────────┘       │
-    │             │                            │                  │
-    │             ▼                            │                  │
-    │  ┌─────────────────────┐                 │                  │
-    │  │  z-billing-store    │                 │                  │
-    │  │ (RocksDB Persistence)│                │                  │
-    │  └──────────┬──────────┘                 │                  │
-    │             │                            │                  │
-    │             ▼                            ▼                  │
-    │          ┌─────────────────────────────────┐                │
-    │          │       z-billing-core            │                │
-    │          │        (Domain Types)           │                │
-    │          └─────────────────────────────────┘                │
-    │                                                             │
-    │  ┌─────────────────────┐                                    │
-    │  │   z-billing-lago    │                                    │
-    │  │ (Lago Docker Mgmt)  │                                    │
-    │  └─────────────────────┘                                    │
-    │                                                             │
-    └─────────────────────────────────────────────────────────────┘
+cp .env.example .env
+# Edit .env with your database URL and auth config
+
+cargo run --release -p z-billing-service
 ```
 
-| Crate | Description |
-|-------|-------------|
-| `z-billing-core` | Domain types (no I/O) |
-| `z-billing-store` | RocksDB persistence with `Store` trait |
-| `z-billing-service` | Axum HTTP API server |
-| `z-billing-client` | HTTP client library for consumers |
-| `z-billing-lago` | Lago deployment via Docker Compose |
+The server starts on `http://0.0.0.0:8080` by default.
+
+### Health Check
+
+```
+curl http://localhost:8080/health
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `LISTEN_ADDR` | No | Bind address (default: `0.0.0.0:8080`, Render uses `0.0.0.0:10000`) |
+| `AUTH_BASE_URL` | No | Auth0/ZID domain for JWKS (default: `https://zid.zero.tech`) |
+| `AUTH_AUDIENCE` | No | JWT audience (default: `z-billing`) |
+| `AUTH_COOKIE_SECRET` | No | Shared secret for HS256 token validation (same as aura-network) |
+| `SERVICE_API_KEY` | Yes | Service-to-service auth key (aura-router uses this) |
+| `ADMIN_API_KEY` | No | Admin key for manual credit operations |
+| `STRIPE_API_KEY` | No | Stripe secret key for payment processing |
+| `STRIPE_WEBHOOK_SECRET` | No | Stripe webhook signing secret |
+| `LAGO_API_URL` | No | Lago API endpoint for usage reporting |
+| `LAGO_API_KEY` | No | Lago API key |
+| `FRONTEND_URL` | No | Checkout redirect URL (default: `http://localhost:3000`) |
+| `CORS_ORIGINS` | No | Comma-separated allowed origins (default: `*`) |
+| `MAX_BODY_BYTES` | No | Max request body size (default: 1MB) |
+| `REQUEST_TIMEOUT_SECONDS` | No | Request timeout (default: 30) |
+
+---
+
+## Authentication
+
+**User endpoints** (balance, purchases) accept a JWT in the `Authorization: Bearer <token>` header. Both RS256 (Auth0 JWKS) and HS256 (shared secret) tokens are accepted — same token format as aura-network and aura-storage.
+
+**Service endpoints** (usage reporting) use `X-API-Key` and `X-Service-Name` headers. aura-router uses this to check balances and report usage.
+
+**Admin endpoints** (manual credit operations) use `X-Admin-Key` header.
+
+---
 
 ## Core Concepts
 
@@ -62,8 +76,9 @@ A credit-based billing system for the Cypher Ecosystem and Zero Tech that handle
 
 ### Accounts
 
+- Auto-created on first usage check or report (zero balance)
 - Balance tracking (current + lifetime stats)
-- Optional subscription with monthly grants
+- Optional subscription with monthly credit grants
 - Auto-refill configuration
 - Stripe and Lago customer IDs
 
@@ -76,174 +91,169 @@ A credit-based billing system for the Cypher Ecosystem and Zero Tech that handle
 | Pro | $50 | 6,000 | 20% |
 | Enterprise | Custom | Custom | Custom |
 
-### Transaction Types
+### LLM Pricing (per 1M tokens)
 
-- `Purchase` - User purchased credits
-- `Usage` - Credits deducted for usage
-- `SubscriptionGrant` - Monthly subscription credit grant
-- `Refund` - Refund issued
-- `Bonus` - Promotional/bonus credits
-- `AutoRefill` - Automatic refill triggered
+| Model | Input Credits | Output Credits |
+|-------|--------------|----------------|
+| Claude Sonnet 4.6 | 300 ($3.00) | 1,500 ($15.00) |
+| Claude Opus 4.6 | 500 ($5.00) | 2,500 ($25.00) |
+| Claude Haiku 4.5 | 100 ($1.00) | 500 ($5.00) |
+| GPT-4o | 250 ($2.50) | 1,000 ($10.00) |
+| GPT-4o Mini | 15 ($0.15) | 60 ($0.60) |
+| Default (unknown) | 100 ($1.00) | 300 ($3.00) |
 
-## Getting Started
+Minimum charge: 1 credit for any non-zero usage.
 
-### Prerequisites
+---
 
-- Rust 2021 edition (1.70+)
-- RocksDB (installed via system package or bundled)
-- Docker (optional, for Lago deployment)
+## API Reference
 
-### Build
+### Health
 
-```bash
-cargo build --release
+| Method | Path | Description | Auth |
+|---|---|---|---|
+| GET | `/health` | Liveness check | None |
+
+### Accounts
+
+| Method | Path | Description | Auth |
+|---|---|---|---|
+| POST | `/v1/accounts` | Create account | JWT |
+| GET | `/v1/accounts/me` | Get current account | JWT |
+| DELETE | `/v1/accounts/me` | Delete account | JWT |
+
+### Credits
+
+| Method | Path | Description | Auth |
+|---|---|---|---|
+| GET | `/v1/credits/balance` | Get current balance | JWT |
+| GET | `/v1/credits/transactions` | Transaction history | JWT |
+| POST | `/v1/credits/purchase` | Initiate Stripe checkout. Body: `{"amount_usd": 25.0}` | JWT |
+| POST | `/v1/credits/auto-refill` | Configure auto-refill | JWT |
+| POST | `/v1/credits/add` | Admin: add credits. Body: `{"user_id": "...", "amount_cents": 5000, "reason": "..."}` | Admin |
+
+### Usage (Service-to-Service)
+
+| Method | Path | Description | Auth |
+|---|---|---|---|
+| POST | `/v1/usage` | Report usage event and debit credits | Service Key |
+| POST | `/v1/usage/batch` | Report multiple usage events | Service Key |
+| POST | `/v1/usage/check` | Check if user has sufficient balance | Service Key |
+
+### Payments
+
+| Method | Path | Description | Auth |
+|---|---|---|---|
+| GET | `/v1/payments` | List Stripe payment history | JWT |
+
+### Webhooks
+
+| Method | Path | Description | Auth |
+|---|---|---|---|
+| POST | `/webhooks/stripe` | Handle Stripe events | Stripe signature |
+| POST | `/webhooks/lago` | Handle Lago events | Lago signature |
+
+---
+
+## Request/Response Format
+
+All request and response bodies use JSON.
+
+**Usage check request:**
+```json
+{
+  "user_id": "uuid",
+  "required_cents": 100
+}
 ```
 
-### Run
-
-```bash
-# Set required environment variables
-export DATA_DIR=./data
-export SERVICE_API_KEY=your-secret-key
-
-# Run the service
-cargo run --release -p z-billing-service
+**Usage check response:**
+```json
+{
+  "sufficient": true,
+  "balance_cents": 5000,
+  "required_cents": 100
+}
 ```
 
-Server starts on `http://0.0.0.0:8080` by default.
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LISTEN_ADDR` | `0.0.0.0:8080` | HTTP server bind address |
-| `DATA_DIR` | `/data/z-billing` | RocksDB data directory |
-| `AUTH_BASE_URL` | `https://zid.zero.tech` | ZID JWKS endpoint |
-| `AUTH_AUDIENCE` | `z-billing` | Expected JWT audience |
-| `SERVICE_API_KEY` | - | Service-to-service auth key |
-| `STRIPE_API_KEY` | - | Stripe secret key |
-| `STRIPE_WEBHOOK_SECRET` | - | Stripe webhook signing secret |
-| `LAGO_API_URL` | - | Lago API endpoint |
-| `LAGO_API_KEY` | - | Lago API authentication key |
-| `LAGO_ORGANIZATION_ID` | - | Lago organization ID |
-| `FRONTEND_URL` | `http://localhost:3000` | Checkout redirect URL |
-| `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
-| `MAX_BODY_BYTES` | `1048576` | Maximum request body size (1MB) |
-| `REQUEST_TIMEOUT_SECONDS` | `30` | Request timeout |
-
-### Secrets Files (alternative)
-
-Configuration can also be loaded from JSON files in `.secrets/`:
-
-- `.secrets/stripe.json`
-  ```json
-  {
-    "api_key": "sk_...",
-    "webhook_secret": "whsec_..."
+**Usage report request:**
+```json
+{
+  "event_id": "unique-id",
+  "user_id": "uuid",
+  "metric": {
+    "type": "llm_tokens",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "input_tokens": 1000,
+    "output_tokens": 500
   }
-  ```
-
-- `.secrets/lago.json`
-  ```json
-  {
-    "api_url": "https://api.getlago.com",
-    "api_key": "...",
-    "organization_id": "..."
-  }
-  ```
-
-## API Overview
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/health` | None | Health check |
-| POST | `/v1/accounts` | ZID JWT | Create account |
-| GET | `/v1/accounts/me` | ZID JWT | Get account |
-| DELETE | `/v1/accounts/me` | ZID JWT | Delete account |
-| GET | `/v1/credits/balance` | ZID JWT | Get balance |
-| GET | `/v1/credits/transactions` | ZID JWT | Transaction history |
-| POST | `/v1/credits/purchase` | ZID JWT | Initiate Stripe checkout |
-| POST | `/v1/credits/auto-refill` | ZID JWT | Configure auto-refill |
-| POST | `/v1/credits/add` | Admin | Add credits (admin) |
-| GET | `/v1/payments` | ZID JWT | List payment history |
-| POST | `/v1/usage` | Service Key | Report usage event |
-| POST | `/v1/usage/batch` | Service Key | Report multiple events |
-| POST | `/v1/usage/check` | Service Key | Check balance sufficiency |
-| POST | `/webhooks/stripe` | Stripe Sig | Handle Stripe events |
-| POST | `/webhooks/lago` | Lago Sig | Handle Lago events |
-
-## Authentication
-
-### End-User (ZID JWT)
-
-```
-Authorization: Bearer <jwt>
+}
 ```
 
-- JWT validated via JWKS from Zero-ID
-- User ID extracted from `sub` claim
-
-### Service-to-Service (API Key)
-
-```
-X-API-Key: <service_api_key>
-X-Service-Name: aura-runtime
-```
-
-- Used by internal services (aura-runtime, aura-swarm)
-- Reports usage events on behalf of users
-
-### Test Token (development)
-
-```
-Authorization: Bearer test-token:<user-uuid>
+**Usage report response:**
+```json
+{
+  "success": true,
+  "balance_cents": 4999,
+  "cost_cents": 1,
+  "transaction_id": "01KM6..."
+}
 ```
 
-## Integrations
+---
+
+## Architecture
+
+| Crate | Description |
+|---|---|
+| **z-billing-core** | Domain types (accounts, credits, pricing, usage events) |
+| **z-billing-store** | Storage layer with PostgreSQL backend (`Store` trait) |
+| **z-billing-service** | Axum HTTP API server with auth, handlers, Stripe/Lago |
+| **z-billing-client** | HTTP client library for service-to-service calls |
+| **z-billing-lago** | Lago deployment management via Docker Compose |
+
+---
+
+## Cross-Service Integration
+
+### From aura-router
+
+aura-router calls z-billing on every LLM request:
+
+```
+1. Pre-check:    POST /v1/usage/check (verify user has credits)
+2. After LLM:    POST /v1/usage (debit credits based on token usage)
+```
+
+Uses `X-API-Key` + `X-Service-Name: aura-router` headers.
 
 ### Stripe
 
-- Customer management
-- Checkout sessions for credit purchases
-- Webhook handling for payment events
+- Checkout sessions for credit purchases (dynamic pricing, any dollar amount)
+- Webhook handling for payment confirmation (`checkout.session.completed`)
 - Auto-refill charges
 
 ### Lago
 
-- Usage event forwarding for analytics
+- Usage event forwarding for analytics and reporting
 - Subscription lifecycle management
 - Invoice generation
 
+---
+
 ## Storage
 
-- Uses RocksDB for persistence
-- Column families: `accounts`, `transactions`, `transactions_by_user`, `usage_events`
-- CBOR serialization for compact storage
-- Atomic operations for balance consistency
+PostgreSQL database with three tables:
 
-## Development
+- **accounts** — User billing accounts (balance, subscription, Stripe/Lago IDs)
+- **credit_transactions** — Immutable ledger of all balance changes (ULID-ordered)
+- **usage_events** — Usage events for idempotency checking
 
-### Run Tests
+Atomic operations: credit deduction uses `SELECT ... FOR UPDATE` row locking within a PostgreSQL transaction to prevent overdraft.
 
-```bash
-cargo test
-```
-
-### With Integration Tests
-
-```bash
-# Requires Stripe/Lago test credentials
-cargo test --features integration
-```
-
-### Logging
-
-```bash
-RUST_LOG=debug cargo run -p z-billing-service
-```
+---
 
 ## License
 
-MIT License
+MIT
