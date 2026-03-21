@@ -27,8 +27,8 @@ struct StripeTestConfig {
 impl StripeTestConfig {
     fn load() -> Option<Self> {
         // Try to load from environment first
-        if let Ok(api_key) = std::env::var("STRIPE_API_KEY_TEST")
-            .or_else(|_| std::env::var("STRIPE_API_KEY"))
+        if let Ok(api_key) =
+            std::env::var("STRIPE_API_KEY_TEST").or_else(|_| std::env::var("STRIPE_API_KEY"))
         {
             return Some(Self {
                 api_key,
@@ -207,7 +207,10 @@ async fn test_stripe_list_payment_intents() {
         .await
         .expect("Failed to list payment intents");
 
-    println!("Found {} payment intents for new customer", payments.data.len());
+    println!(
+        "Found {} payment intents for new customer",
+        payments.data.len()
+    );
     assert!(payments.data.is_empty()); // New customer has no payments
 }
 
@@ -320,7 +323,10 @@ async fn test_full_account_creation_with_stripe() {
     response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
-    println!("Account created: {}", serde_json::to_string_pretty(&body).unwrap());
+    println!(
+        "Account created: {}",
+        serde_json::to_string_pretty(&body).unwrap()
+    );
 
     assert_eq!(body["user_id"], user_id.to_string());
     assert_eq!(body["balance_cents"], 0);
@@ -363,7 +369,10 @@ async fn test_full_purchase_credits_flow() {
     response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
-    println!("Purchase response: {}", serde_json::to_string_pretty(&body).unwrap());
+    println!(
+        "Purchase response: {}",
+        serde_json::to_string_pretty(&body).unwrap()
+    );
 
     let checkout_url = body["checkout_url"].as_str().expect("Missing checkout_url");
     let session_id = body["session_id"].as_str().expect("Missing session_id");
@@ -414,7 +423,7 @@ async fn test_full_payment_flow() {
         .add_header(axum::http::header::AUTHORIZATION, auth_header.clone())
         .json(&json!({ "email": "full-flow-test@example.com" }))
         .await;
-    
+
     response.assert_status_ok();
     let account: serde_json::Value = response.json();
     println!("   ✅ Account created: {}", account["user_id"]);
@@ -429,7 +438,10 @@ async fn test_full_payment_flow() {
 
     response.assert_status_ok();
     let balance: serde_json::Value = response.json();
-    println!("   Initial balance: {} cents ({})", balance["balance_cents"], balance["balance_formatted"]);
+    println!(
+        "   Initial balance: {} cents ({})",
+        balance["balance_cents"], balance["balance_formatted"]
+    );
     assert_eq!(balance["balance_cents"], 0);
 
     // Step 3: Initiate purchase (creates real Stripe checkout session)
@@ -444,11 +456,14 @@ async fn test_full_payment_flow() {
     let purchase: serde_json::Value = response.json();
     println!("   ✅ Checkout session created!");
     println!("   Session ID: {}", purchase["session_id"]);
-    println!("   Checkout URL: {}", &purchase["checkout_url"].as_str().unwrap()[..80]);
+    println!(
+        "   Checkout URL: {}",
+        &purchase["checkout_url"].as_str().unwrap()[..80]
+    );
 
     // Step 4: Simulate webhook (as if user completed payment)
     println!("\n🔔 Step 4: Simulating Stripe webhook (checkout.session.completed)...");
-    
+
     let webhook_payload = json!({
         "id": format!("evt_test_{}", uuid::Uuid::new_v4()),
         "type": "checkout.session.completed",
@@ -476,7 +491,10 @@ async fn test_full_payment_flow() {
     if response.status_code() == 200 {
         println!("   ✅ Webhook processed successfully!");
     } else {
-        println!("   ⚠️  Webhook response: {} (signature verification may be enabled)", response.status_code());
+        println!(
+            "   ⚠️  Webhook response: {} (signature verification may be enabled)",
+            response.status_code()
+        );
         let body = response.text();
         println!("   Response: {}", body);
     }
@@ -490,7 +508,10 @@ async fn test_full_payment_flow() {
 
     response.assert_status_ok();
     let balance: serde_json::Value = response.json();
-    println!("   New balance: {} cents ({})", balance["balance_cents"], balance["balance_formatted"]);
+    println!(
+        "   New balance: {} cents ({})",
+        balance["balance_cents"], balance["balance_formatted"]
+    );
 
     // Step 6: Check transaction history
     println!("\n📜 Step 6: Checking transaction history...");
@@ -501,14 +522,13 @@ async fn test_full_payment_flow() {
 
     response.assert_status_ok();
     let transactions: serde_json::Value = response.json();
-    
+
     if let Some(txs) = transactions["transactions"].as_array() {
         println!("   Found {} transaction(s):", txs.len());
         for tx in txs {
-            println!("   - {} | {} cents | {}", 
-                tx["transaction_type"],
-                tx["amount_cents"],
-                tx["description"]
+            println!(
+                "   - {} | {} cents | {}",
+                tx["transaction_type"], tx["amount_cents"], tx["description"]
             );
         }
     }
@@ -535,7 +555,7 @@ async fn test_full_payment_flow() {
 #[ignore = "manual test"]
 async fn list_recent_sessions() {
     let config = StripeTestConfig::load().expect("Stripe credentials not found");
-    
+
     // Use reqwest directly to list checkout sessions
     let client = reqwest::Client::new();
     let response = client
@@ -547,7 +567,7 @@ async fn list_recent_sessions() {
         .expect("Failed to list sessions");
 
     let body: serde_json::Value = response.json().await.expect("Failed to parse response");
-    
+
     println!("\n╔══════════════════════════════════════════════════════════════════════════════╗");
     println!("║                        RECENT CHECKOUT SESSIONS                               ║");
     println!("╠══════════════════════════════════════════════════════════════════════════════╣");
@@ -555,13 +575,28 @@ async fn list_recent_sessions() {
     if let Some(sessions) = body.get("data").and_then(|d| d.as_array()) {
         for session in sessions {
             let id = session.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-            let _status = session.get("status").and_then(|v| v.as_str()).unwrap_or("?");
-            let payment_status = session.get("payment_status").and_then(|v| v.as_str()).unwrap_or("?");
-            let amount = session.get("amount_total").and_then(|v| v.as_i64()).unwrap_or(0);
-            let customer = session.get("customer").and_then(|v| v.as_str()).unwrap_or("none");
+            let _status = session
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let payment_status = session
+                .get("payment_status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let amount = session
+                .get("amount_total")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let customer = session
+                .get("customer")
+                .and_then(|v| v.as_str())
+                .unwrap_or("none");
             let created = session.get("created").and_then(|v| v.as_i64()).unwrap_or(0);
-            let client_ref = session.get("client_reference_id").and_then(|v| v.as_str()).unwrap_or("none");
-            
+            let client_ref = session
+                .get("client_reference_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("none");
+
             let created_str = chrono::DateTime::from_timestamp(created, 0)
                 .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
                 .unwrap_or_else(|| created.to_string());
@@ -572,15 +607,16 @@ async fn list_recent_sessions() {
                 _ => "❓",
             };
 
-            println!("║ {} {} | ${:.2} | {} | {}", 
-                status_icon, 
+            println!(
+                "║ {} {} | ${:.2} | {} | {}",
+                status_icon,
                 &id[..id.len().min(50)],
                 amount as f64 / 100.0,
                 payment_status,
                 created_str
             );
             println!("║    Customer: {} | Ref: {}", customer, client_ref);
-            
+
             // Show metadata if payment was successful
             if payment_status == "paid" {
                 if let Some(metadata) = session.get("metadata") {
@@ -592,12 +628,16 @@ async fn list_recent_sessions() {
                     }
                 }
             }
-            println!("╠──────────────────────────────────────────────────────────────────────────────╣");
+            println!(
+                "╠──────────────────────────────────────────────────────────────────────────────╣"
+            );
         }
     }
-    
+
     println!("╚══════════════════════════════════════════════════════════════════════════════╝");
-    println!("\n💡 To receive credits automatically, set up a webhook endpoint in Stripe Dashboard");
+    println!(
+        "\n💡 To receive credits automatically, set up a webhook endpoint in Stripe Dashboard"
+    );
     println!("   pointing to: https://your-domain.com/webhooks/stripe");
 }
 
@@ -614,7 +654,11 @@ async fn manual_e2e_stripe_test() {
 
     // Create customer
     let customer = client
-        .create_customer(&user_id, Some("manual-test@example.com"), Some("Manual Test"))
+        .create_customer(
+            &user_id,
+            Some("manual-test@example.com"),
+            Some("Manual Test"),
+        )
         .await
         .expect("Failed to create customer");
 

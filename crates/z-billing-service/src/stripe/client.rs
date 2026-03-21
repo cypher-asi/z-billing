@@ -215,7 +215,11 @@ impl StripeClient {
     ) -> Result<CheckoutSession, StripeError> {
         let response = self
             .client
-            .get(format!("{}/checkout/sessions/{}", Self::BASE_URL, session_id))
+            .get(format!(
+                "{}/checkout/sessions/{}",
+                Self::BASE_URL,
+                session_id
+            ))
             .basic_auth(&self.api_key, Option::<&str>::None)
             .send()
             .await?;
@@ -256,7 +260,8 @@ impl StripeClient {
             .client
             .get(format!(
                 "{}/payment_intents/{}",
-                Self::BASE_URL, payment_intent_id
+                Self::BASE_URL,
+                payment_intent_id
             ))
             .basic_auth(&self.api_key, Option::<&str>::None)
             .send()
@@ -355,7 +360,9 @@ impl StripeClient {
         let expected = compute_hmac_sha256(secret, &signed_payload);
 
         // Check if any signature matches (constant-time comparison)
-        let valid = signatures.iter().any(|sig| constant_time_eq(&expected, sig));
+        let valid = signatures
+            .iter()
+            .any(|sig| constant_time_eq(&expected, sig));
 
         if valid {
             Ok(())

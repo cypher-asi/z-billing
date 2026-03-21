@@ -83,7 +83,11 @@ pub async fn create_account(
             .unwrap_or_else(|| format!("User {}", auth.user_id));
 
         match stripe
-            .create_customer(&auth.user_id.to_string(), body.email.as_deref(), Some(&name))
+            .create_customer(
+                &auth.user_id.to_string(),
+                body.email.as_deref(),
+                Some(&name),
+            )
             .await
         {
             Ok(customer) => {

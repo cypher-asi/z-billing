@@ -38,46 +38,79 @@ impl Default for PricingConfig {
             output_credits_per_million: 2500, // $25.00 per 1M
         };
         let haiku_pricing = LlmPricing {
-            input_credits_per_million: 100, // $1.00 per 1M
+            input_credits_per_million: 100,  // $1.00 per 1M
             output_credits_per_million: 500, // $5.00 per 1M
         };
 
         // Current model IDs
-        llm_pricing.insert(ModelKey::new("anthropic", "claude-sonnet-4-6"), sonnet_pricing.clone());
-        llm_pricing.insert(ModelKey::new("anthropic", "claude-opus-4-6"), opus_pricing.clone());
-        llm_pricing.insert(ModelKey::new("anthropic", "claude-haiku-4-5-20251001"), haiku_pricing.clone());
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-sonnet-4-6"),
+            sonnet_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-opus-4-6"),
+            opus_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-haiku-4-5-20251001"),
+            haiku_pricing.clone(),
+        );
 
         // Legacy model IDs (backward compatibility)
-        llm_pricing.insert(ModelKey::new("anthropic", "claude-3-5-sonnet"), sonnet_pricing.clone());
-        llm_pricing.insert(ModelKey::new("anthropic", "claude-3-5-sonnet-20241022"), sonnet_pricing);
-        llm_pricing.insert(ModelKey::new("anthropic", "claude-3-haiku"), LlmPricing {
-            input_credits_per_million: 25,
-            output_credits_per_million: 125,
-        });
-        llm_pricing.insert(ModelKey::new("anthropic", "claude-3-opus"), LlmPricing {
-            input_credits_per_million: 1500,
-            output_credits_per_million: 7500,
-        });
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-3-5-sonnet"),
+            sonnet_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-3-5-sonnet-20241022"),
+            sonnet_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-3-haiku"),
+            LlmPricing {
+                input_credits_per_million: 25,
+                output_credits_per_million: 125,
+            },
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-3-opus"),
+            LlmPricing {
+                input_credits_per_million: 1500,
+                output_credits_per_million: 7500,
+            },
+        );
 
         // OpenAI models
-        llm_pricing.insert(ModelKey::new("openai", "gpt-4o"), LlmPricing {
-            input_credits_per_million: 250,
-            output_credits_per_million: 1000,
-        });
-        llm_pricing.insert(ModelKey::new("openai", "gpt-4o-mini"), LlmPricing {
-            input_credits_per_million: 15,
-            output_credits_per_million: 60,
-        });
+        llm_pricing.insert(
+            ModelKey::new("openai", "gpt-4o"),
+            LlmPricing {
+                input_credits_per_million: 250,
+                output_credits_per_million: 1000,
+            },
+        );
+        llm_pricing.insert(
+            ModelKey::new("openai", "gpt-4o-mini"),
+            LlmPricing {
+                input_credits_per_million: 15,
+                output_credits_per_million: 60,
+            },
+        );
 
         // Google models
-        llm_pricing.insert(ModelKey::new("google", "gemini-2.5-pro"), LlmPricing {
-            input_credits_per_million: 125,
-            output_credits_per_million: 500,
-        });
-        llm_pricing.insert(ModelKey::new("google", "gemini-2.5-flash"), LlmPricing {
-            input_credits_per_million: 8,
-            output_credits_per_million: 30,
-        });
+        llm_pricing.insert(
+            ModelKey::new("google", "gemini-2.5-pro"),
+            LlmPricing {
+                input_credits_per_million: 125,
+                output_credits_per_million: 500,
+            },
+        );
+        llm_pricing.insert(
+            ModelKey::new("google", "gemini-2.5-flash"),
+            LlmPricing {
+                input_credits_per_million: 8,
+                output_credits_per_million: 30,
+            },
+        );
 
         Self {
             z_credit_rate_usd: 0.01,

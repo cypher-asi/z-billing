@@ -297,8 +297,12 @@ pub async fn configure_auto_refill(
 
     account.auto_refill = Some(AutoRefill {
         enabled: body.enabled,
-        trigger_below_cents: body.trigger_below_cents.unwrap_or(DEFAULT_AUTO_REFILL_TRIGGER_CENTS),
-        refill_amount_cents: body.refill_amount_cents.unwrap_or(DEFAULT_AUTO_REFILL_AMOUNT_CENTS),
+        trigger_below_cents: body
+            .trigger_below_cents
+            .unwrap_or(DEFAULT_AUTO_REFILL_TRIGGER_CENTS),
+        refill_amount_cents: body
+            .refill_amount_cents
+            .unwrap_or(DEFAULT_AUTO_REFILL_AMOUNT_CENTS),
     });
     account.updated_at = chrono::Utc::now();
 

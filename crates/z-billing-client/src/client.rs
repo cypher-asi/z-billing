@@ -32,7 +32,10 @@ impl ZBillingClient {
     /// # Errors
     ///
     /// Returns an error if the HTTP client cannot be built.
-    pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Result<Self, ClientError> {
+    pub fn new(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Result<Self, ClientError> {
         Self::with_options(base_url, api_key, ClientOptions::default())
     }
 

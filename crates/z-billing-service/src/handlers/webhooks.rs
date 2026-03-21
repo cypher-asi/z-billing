@@ -53,16 +53,14 @@ pub async fn stripe_webhook(
 
     // Verify signature if webhook_secret is configured
     if let Some(webhook_secret) = &state.config.stripe_webhook_secret {
-        let sig = signature
-            .ok_or_else(|| ApiError::BadRequest("Missing Stripe signature".into()))?;
+        let sig =
+            signature.ok_or_else(|| ApiError::BadRequest("Missing Stripe signature".into()))?;
 
         if let Some(stripe) = &state.stripe {
-            stripe
-                .verify_webhook_signature(&body, sig)
-                .map_err(|e| {
-                    tracing::warn!(error = %e, "Invalid Stripe webhook signature");
-                    ApiError::BadRequest("Invalid webhook signature".into())
-                })?;
+            stripe.verify_webhook_signature(&body, sig).map_err(|e| {
+                tracing::warn!(error = %e, "Invalid Stripe webhook signature");
+                ApiError::BadRequest("Invalid webhook signature".into())
+            })?;
         } else {
             tracing::warn!(
                 "Stripe webhook_secret configured but client not available - skipping verification"
@@ -187,10 +185,7 @@ async fn handle_checkout_completed(
         .and_then(|v| v.as_str())
         .ok_or_else(|| ApiError::BadRequest("Missing client_reference_id".into()))?;
 
-    let session_id = data
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
+    let session_id = data.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
 
     let payment_status = data
         .get("payment_status")
@@ -394,7 +389,7 @@ async fn handle_lago_subscription_started(
     data: &serde_json::Value,
 ) -> Result<(), ApiError> {
     let subscription = data.get("subscription");
-    
+
     let external_customer_id = subscription
         .and_then(|s| s.get("external_customer_id"))
         .and_then(|v| v.as_str());
@@ -419,9 +414,9 @@ async fn handle_lago_subscription_started(
         ApiError::BadRequest("Missing external_customer_id in subscription".into())
     })?;
 
-    let user_id = user_id_str.parse().map_err(|_| {
-        ApiError::BadRequest(format!("Invalid user_id: {user_id_str}"))
-    })?;
+    let user_id = user_id_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest(format!("Invalid user_id: {user_id_str}")))?;
 
     // Determine plan from plan_code
     let plan = match plan_code {
@@ -436,7 +431,7 @@ async fn handle_lago_subscription_started(
 
     // Get monthly credits for this plan
     let monthly_credits = plan.monthly_credits();
-    
+
     if monthly_credits == 0 {
         tracing::debug!(
             user_id = %user_id_str,
@@ -462,12 +457,8 @@ async fn handle_lago_subscription_started(
     // Create transaction for subscription credits
     let new_balance = account.balance_cents + monthly_credits;
     let plan_name = format!("{plan:?}");
-    let tx = CreditTransaction::subscription_grant(
-        user_id,
-        monthly_credits,
-        new_balance,
-        &plan_name,
-    );
+    let tx =
+        CreditTransaction::subscription_grant(user_id, monthly_credits, new_balance, &plan_name);
 
     // Add credits
     let balance = state.store.add_credits(&user_id, monthly_credits, &tx)?;

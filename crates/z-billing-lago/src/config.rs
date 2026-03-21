@@ -159,7 +159,11 @@ mod tests {
         let config = LagoConfig::new().with_api_key("my-key");
         let vars = config.to_env_vars();
 
-        assert!(vars.iter().any(|(k, v)| k == "LAGO_API_URL" && v == "http://localhost:3000"));
-        assert!(vars.iter().any(|(k, v)| k == "LAGO_API_KEY" && v == "my-key"));
+        assert!(vars
+            .iter()
+            .any(|(k, v)| k == "LAGO_API_URL" && v == "http://localhost:3000"));
+        assert!(vars
+            .iter()
+            .any(|(k, v)| k == "LAGO_API_KEY" && v == "my-key"));
     }
 }

@@ -368,14 +368,10 @@ async fn validate_jwt(token: &str, state: &AppState) -> Result<JwtClaims, ApiErr
 /// These tokens use a shared secret (AUTH_COOKIE_SECRET) and may not include
 /// standard claims like exp/aud — matches aura-network's behavior.
 fn validate_hs256(token: &str, state: &AppState) -> Result<JwtClaims, ApiError> {
-    let secret = state
-        .config
-        .auth_cookie_secret
-        .as_ref()
-        .ok_or_else(|| {
-            tracing::debug!("HS256 token received but AUTH_COOKIE_SECRET not configured");
-            ApiError::Unauthorized
-        })?;
+    let secret = state.config.auth_cookie_secret.as_ref().ok_or_else(|| {
+        tracing::debug!("HS256 token received but AUTH_COOKIE_SECRET not configured");
+        ApiError::Unauthorized
+    })?;
 
     let key = DecodingKey::from_secret(secret.as_bytes());
     let mut validation = Validation::new(Algorithm::HS256);

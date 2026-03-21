@@ -118,7 +118,9 @@ impl LagoDeployment {
     pub async fn status(&self) -> Result<DeployStatus, DeployError> {
         debug!("Getting Lago service status");
 
-        let output = self.run_compose_command(&["ps", "--format", "json"]).await?;
+        let output = self
+            .run_compose_command(&["ps", "--format", "json"])
+            .await?;
 
         let services = parse_compose_ps_output(&output);
         let running = services.iter().any(|(_, s)| *s == ServiceStatus::Running);
@@ -137,7 +139,11 @@ impl LagoDeployment {
     ///
     /// Returns an error if Docker Compose fails to get the logs.
     #[instrument(skip(self))]
-    pub async fn logs(&self, service: Option<&str>, tail: Option<u32>) -> Result<String, DeployError> {
+    pub async fn logs(
+        &self,
+        service: Option<&str>,
+        tail: Option<u32>,
+    ) -> Result<String, DeployError> {
         debug!("Getting Lago service logs");
 
         let tail_arg = format!("--tail={}", tail.unwrap_or(100));
