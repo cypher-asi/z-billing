@@ -219,10 +219,10 @@ pub async fn purchase_credits(
 
     // Create Stripe checkout session
     let success_url = format!(
-        "{}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
+        "{}/credits/success?session_id={{CHECKOUT_SESSION_ID}}",
         state.config.frontend_url
     );
-    let cancel_url = format!("{}/billing/cancel", state.config.frontend_url);
+    let cancel_url = format!("{}/credits/cancel", state.config.frontend_url);
 
     let session = stripe
         .create_checkout_session(
