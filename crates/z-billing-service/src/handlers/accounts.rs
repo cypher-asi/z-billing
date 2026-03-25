@@ -151,15 +151,20 @@ pub async fn create_account(
     Ok(Json(AccountResponse::from(&account)))
 }
 
-/// Get the current user's account.
+/// Get the current user's account, auto-creating with zero balance if it doesn't exist.
 pub async fn get_account(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<AccountResponse>, ApiError> {
-    let account = state
-        .store
-        .get_account(&auth.user_id)?
-        .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
+    let account = match state.store.get_account(&auth.user_id)? {
+        Some(account) => account,
+        None => {
+            let account = Account::new(auth.user_id);
+            state.store.put_account(&account)?;
+            tracing::info!(user_id = %auth.user_id, "Auto-created billing account on first access");
+            account
+        }
+    };
 
     Ok(Json(AccountResponse::from(&account)))
 }
