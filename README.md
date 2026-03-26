@@ -153,6 +153,26 @@ Minimum charge: 1 credit for any non-zero usage.
 | POST | `/webhooks/stripe` | Handle Stripe events | Stripe signature |
 | POST | `/webhooks/lago` | Handle Lago events | Lago signature |
 
+### Real-Time
+
+| Protocol | Path | Description | Auth |
+|---|---|---|---|
+| WebSocket | `/ws/balance` | Real-time balance updates | JWT (query param `?token=`) |
+
+Broadcasts `balance.updated` events when credits are debited (usage), credited (Stripe purchase), or added (admin/subscription).
+
+Event payload:
+```json
+{
+  "type": "balance.updated",
+  "userId": "uuid",
+  "balanceCents": 5000,
+  "balanceFormatted": "$50.00"
+}
+```
+
+Ping/pong keepalive every 30 seconds.
+
 ---
 
 ## Request/Response Format

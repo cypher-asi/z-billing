@@ -260,6 +260,18 @@ async fn handle_checkout_completed(
     // Add credits
     let balance = state.store.add_credits(&user_id, credits_amount, &tx)?;
 
+    // Broadcast balance update to WebSocket clients
+    #[allow(clippy::cast_precision_loss)]
+    let _ = state.balance_tx.send(
+        serde_json::json!({
+            "type": "balance.updated",
+            "userId": user_id_str,
+            "balanceCents": balance,
+            "balanceFormatted": format!("${:.2}", balance as f64 / 100.0),
+        })
+        .to_string(),
+    );
+
     tracing::info!(
         user_id = %user_id_str,
         credits_added = %credits_amount,
@@ -462,6 +474,18 @@ async fn handle_lago_subscription_started(
 
     // Add credits
     let balance = state.store.add_credits(&user_id, monthly_credits, &tx)?;
+
+    // Broadcast balance update to WebSocket clients
+    #[allow(clippy::cast_precision_loss)]
+    let _ = state.balance_tx.send(
+        serde_json::json!({
+            "type": "balance.updated",
+            "userId": user_id_str,
+            "balanceCents": balance,
+            "balanceFormatted": format!("${:.2}", balance as f64 / 100.0),
+        })
+        .to_string(),
+    );
 
     tracing::info!(
         user_id = %user_id_str,

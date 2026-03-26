@@ -422,6 +422,18 @@ pub async fn admin_add_credits(
     // Add credits
     let balance = state.store.add_credits(&user_id, body.amount_cents, &tx)?;
 
+    // Broadcast balance update to WebSocket clients
+    #[allow(clippy::cast_precision_loss)]
+    let _ = state.balance_tx.send(
+        serde_json::json!({
+            "type": "balance.updated",
+            "userId": user_id.to_string(),
+            "balanceCents": balance,
+            "balanceFormatted": format!("${:.2}", balance as f64 / 100.0),
+        })
+        .to_string(),
+    );
+
     tracing::info!(
         admin_id = %admin.admin_id,
         user_id = %user_id,

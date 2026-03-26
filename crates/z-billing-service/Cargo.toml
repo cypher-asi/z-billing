@@ -24,7 +24,7 @@ z-billing-core = { path = "../z-billing-core" }
 z-billing-store = { path = "../z-billing-store", default-features = false }
 
 # Web framework
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.7", features = ["macros", "ws"] }
 tower = { version = "0.4", features = ["limit"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "limit", "timeout"] }
 

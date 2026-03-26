@@ -13,7 +13,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::handlers::{accounts, credits, health, usage, webhooks};
+use crate::handlers::{accounts, credits, health, usage, webhooks, ws};
 use crate::state::AppState;
 
 // ============================================================================
@@ -92,6 +92,8 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Health (public, no rate limit)
         .route("/health", get(health::health))
+        // WebSocket (JWT auth via query param)
+        .route("/ws/balance", get(ws::ws_balance))
         // API v1 routes (rate limited)
         .nest("/v1", api_routes)
         // Webhooks (no rate limit - controlled by external services)

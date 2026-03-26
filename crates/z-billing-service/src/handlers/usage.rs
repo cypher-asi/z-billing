@@ -179,6 +179,18 @@ pub async fn report_usage(
         "Usage processed"
     );
 
+    // Broadcast balance update to WebSocket clients
+    #[allow(clippy::cast_precision_loss)]
+    let _ = state.balance_tx.send(
+        serde_json::json!({
+            "type": "balance.updated",
+            "userId": user_id.to_string(),
+            "balanceCents": balance,
+            "balanceFormatted": format!("${:.2}", balance as f64 / 100.0),
+        })
+        .to_string(),
+    );
+
     // Check for auto-refill trigger (async, non-blocking)
     maybe_trigger_auto_refill(&state, &account, user_id, balance);
 

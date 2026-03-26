@@ -5,3 +5,4 @@ pub mod credits;
 pub mod health;
 pub mod usage;
 pub mod webhooks;
+pub mod ws;

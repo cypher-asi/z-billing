@@ -334,7 +334,7 @@ fn get_jwks_cache() -> &'static RwLock<JwksCache> {
 ///
 /// HS256 tokens from zOS use a specific KID (`SELF_SIGNED_KID`). All other tokens
 /// are validated via RS256 JWKS, matching the pattern from aura-network.
-async fn validate_jwt(token: &str, state: &AppState) -> Result<JwtClaims, ApiError> {
+pub async fn validate_jwt(token: &str, state: &AppState) -> Result<JwtClaims, ApiError> {
     // Decode the header to get the key ID
     let header = decode_header(token).map_err(|e| {
         tracing::debug!(error = %e, "Failed to decode JWT header");

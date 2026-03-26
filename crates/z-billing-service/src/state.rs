@@ -22,6 +22,9 @@ pub struct AppState {
 
     /// Stripe client for payments (optional).
     pub stripe: Option<Arc<StripeClient>>,
+
+    /// Broadcast channel for real-time balance updates.
+    pub balance_tx: tokio::sync::broadcast::Sender<String>,
 }
 
 impl AppState {
@@ -66,11 +69,14 @@ impl AppState {
             tracing::warn!("Stripe not configured - payments will not be available");
         }
 
+        let (balance_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+
         Self {
             store,
             config,
             lago,
             stripe,
+            balance_tx,
         }
     }
 
