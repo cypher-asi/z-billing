@@ -144,6 +144,10 @@ pub async fn report_usage(
         .cost_cents
         .unwrap_or_else(|| calculate_cost(&state.config.pricing, &body.metric));
 
+    if cost_cents <= 0 {
+        return Err(ApiError::BadRequest("cost_cents must be positive".into()));
+    }
+
     // Build usage event
     let (metric, quantity) = convert_metric(&body.metric);
     let event = UsageEvent {
@@ -421,6 +425,10 @@ async fn process_single_usage(
     let cost_cents = body
         .cost_cents
         .unwrap_or_else(|| calculate_cost(&state.config.pricing, &body.metric));
+
+    if cost_cents <= 0 {
+        return Err(ApiError::BadRequest("cost_cents must be positive".into()));
+    }
 
     let (metric, quantity) = convert_metric(&body.metric);
     let event = UsageEvent {

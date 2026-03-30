@@ -409,6 +409,12 @@ pub async fn admin_add_credits(
         .parse()
         .map_err(|_| ApiError::BadRequest("Invalid user ID".into()))?;
 
+    if body.amount_cents <= 0 {
+        return Err(ApiError::BadRequest(
+            "amount_cents must be positive".into(),
+        ));
+    }
+
     // Get account
     let account = state
         .store
