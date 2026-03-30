@@ -105,8 +105,8 @@ impl ServiceConfig {
             auth_cookie_secret: std::env::var("AUTH_COOKIE_SECRET")
                 .ok()
                 .filter(|s| !s.is_empty()),
-            service_api_key: std::env::var("SERVICE_API_KEY").ok(),
-            admin_api_key: std::env::var("ADMIN_API_KEY").ok(),
+            service_api_key: std::env::var("SERVICE_API_KEY").ok().filter(|s| !s.is_empty()),
+            admin_api_key: std::env::var("ADMIN_API_KEY").ok().filter(|s| !s.is_empty()),
             lago_api_url,
             lago_api_key,
             lago_webhook_secret,
