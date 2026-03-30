@@ -375,8 +375,7 @@ fn validate_hs256(token: &str, state: &AppState) -> Result<JwtClaims, ApiError> 
 
     let key = DecodingKey::from_secret(secret.as_bytes());
     let mut validation = Validation::new(Algorithm::HS256);
-    // zOS self-signed tokens may not include exp/iat claims
-    validation.validate_exp = false;
+    // zOS API sets exp to 1 year from issuance on self-signed tokens
     validation.validate_aud = false;
     validation.required_spec_claims.clear();
 
