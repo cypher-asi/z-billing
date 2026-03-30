@@ -286,6 +286,44 @@ impl Store for PgStore {
         })
     }
 
+    fn has_webhook_event(&self, event_id: &str) -> Result<bool> {
+        let pool = self.pool.clone();
+        let event_id = event_id.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let exists = sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM processed_webhooks WHERE event_id = $1)",
+                )
+                .bind(&event_id)
+                .fetch_one(&pool)
+                .await
+                .map_err(|e| StoreError::Database(e.to_string()))?;
+
+                Ok(exists)
+            })
+        })
+    }
+
+    fn record_webhook_event(&self, event_id: &str, source: &str) -> Result<()> {
+        let pool = self.pool.clone();
+        let event_id = event_id.to_string();
+        let source = source.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                sqlx::query(
+                    "INSERT INTO processed_webhooks (event_id, source) VALUES ($1, $2) ON CONFLICT (event_id) DO NOTHING",
+                )
+                .bind(&event_id)
+                .bind(&source)
+                .execute(&pool)
+                .await
+                .map_err(|e| StoreError::Database(e.to_string()))?;
+
+                Ok(())
+            })
+        })
+    }
+
     fn process_usage(&self, event: &UsageEvent, transaction: &CreditTransaction) -> Result<i64> {
         let pool = self.pool.clone();
         let event = event.clone();

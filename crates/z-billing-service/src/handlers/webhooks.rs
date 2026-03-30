@@ -51,26 +51,26 @@ pub async fn stripe_webhook(
         .get("stripe-signature")
         .and_then(|v| v.to_str().ok());
 
-    // Verify signature if webhook_secret is configured
-    if let Some(webhook_secret) = &state.config.stripe_webhook_secret {
-        let sig =
-            signature.ok_or_else(|| ApiError::BadRequest("Missing Stripe signature".into()))?;
+    // Verify signature -- reject if webhook secret or client is not configured
+    let stripe = state.stripe.as_ref().ok_or_else(|| {
+        tracing::error!("Stripe webhook received but Stripe client not configured");
+        ApiError::Internal("Webhook processing unavailable".into())
+    })?;
 
-        if let Some(stripe) = &state.stripe {
-            stripe.verify_webhook_signature(&body, sig).map_err(|e| {
-                tracing::warn!(error = %e, "Invalid Stripe webhook signature");
-                ApiError::BadRequest("Invalid webhook signature".into())
-            })?;
-        } else {
-            tracing::warn!(
-                "Stripe webhook_secret configured but client not available - skipping verification"
-            );
-        }
-        let _ = webhook_secret; // Silence unused warning
-    } else {
-        // No webhook_secret configured - skip verification (development mode)
-        tracing::warn!("Stripe webhook_secret not configured - skipping signature verification");
+    if state.config.stripe_webhook_secret.is_none() {
+        tracing::error!("Stripe webhook received but STRIPE_WEBHOOK_SECRET not configured");
+        return Err(ApiError::Internal(
+            "Webhook processing unavailable".into(),
+        ));
     }
+
+    let sig =
+        signature.ok_or_else(|| ApiError::BadRequest("Missing Stripe signature".into()))?;
+
+    stripe.verify_webhook_signature(&body, sig).map_err(|e| {
+        tracing::warn!(error = %e, "Invalid Stripe webhook signature");
+        ApiError::BadRequest("Invalid webhook signature".into())
+    })?;
 
     // Parse webhook payload
     let webhook: StripeWebhook =
@@ -81,6 +81,12 @@ pub async fn stripe_webhook(
         event_id = %webhook.id,
         "Received Stripe webhook"
     );
+
+    // Replay protection: reject if this event was already processed
+    if state.store.has_webhook_event(&webhook.id)? {
+        tracing::warn!(event_id = %webhook.id, "Duplicate Stripe webhook event, skipping");
+        return Ok(Json(WebhookResponse { received: true }));
+    }
 
     // Handle different event types
     match webhook.event_type.as_str() {
@@ -104,6 +110,9 @@ pub async fn stripe_webhook(
         }
     }
 
+    // Record event as processed for replay protection
+    state.store.record_webhook_event(&webhook.id, "stripe")?;
+
     Ok(Json(WebhookResponse { received: true }))
 }
 
@@ -125,20 +134,21 @@ pub async fn lago_webhook(
     headers: HeaderMap,
     body: String,
 ) -> Result<Json<WebhookResponse>, ApiError> {
-    // Verify webhook signature if secret is configured
-    if let Some(webhook_secret) = &state.config.lago_webhook_secret {
-        let signature = headers
-            .get("x-lago-signature")
-            .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| ApiError::BadRequest("Missing Lago signature".into()))?;
+    // Verify webhook signature -- reject if secret is not configured
+    let webhook_secret = state.config.lago_webhook_secret.as_ref().ok_or_else(|| {
+        tracing::error!("Lago webhook received but LAGO_WEBHOOK_SECRET not configured");
+        ApiError::Internal("Webhook processing unavailable".into())
+    })?;
 
-        verify_lago_signature(&body, signature, webhook_secret).map_err(|e| {
-            tracing::warn!(error = %e, "Invalid Lago webhook signature");
-            ApiError::BadRequest("Invalid webhook signature".into())
-        })?;
-    } else {
-        tracing::warn!("Lago webhook_secret not configured - skipping signature verification");
-    }
+    let signature = headers
+        .get("x-lago-signature")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| ApiError::BadRequest("Missing Lago signature".into()))?;
+
+    verify_lago_signature(&body, signature, webhook_secret).map_err(|e| {
+        tracing::warn!(error = %e, "Invalid Lago webhook signature");
+        ApiError::BadRequest("Invalid webhook signature".into())
+    })?;
 
     // Parse webhook payload
     let webhook: LagoWebhook =
@@ -149,6 +159,23 @@ pub async fn lago_webhook(
         object_type = %webhook.object_type,
         "Received Lago webhook"
     );
+
+    // Build dedup key from webhook_type + inner lago_id (Lago has no top-level event ID)
+    let lago_id = webhook
+        .data
+        .get(&webhook.object_type)
+        .or_else(|| webhook.data.get("subscription"))
+        .or_else(|| webhook.data.get("invoice"))
+        .and_then(|obj| obj.get("lago_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let dedup_key = format!("lago:{}:{}", webhook.webhook_type, lago_id);
+
+    // Replay protection: reject if this event was already processed
+    if state.store.has_webhook_event(&dedup_key)? {
+        tracing::warn!(dedup_key = %dedup_key, "Duplicate Lago webhook event, skipping");
+        return Ok(Json(WebhookResponse { received: true }));
+    }
 
     // Handle different webhook types
     match webhook.webhook_type.as_str() {
@@ -168,6 +195,9 @@ pub async fn lago_webhook(
             tracing::debug!(webhook_type = %webhook.webhook_type, "Unhandled Lago event");
         }
     }
+
+    // Record event as processed for replay protection
+    state.store.record_webhook_event(&dedup_key, "lago")?;
 
     Ok(Json(WebhookResponse { received: true }))
 }

@@ -165,6 +165,24 @@ pub trait Store: Send + Sync {
     fn get_usage_event(&self, event_id: &str) -> Result<Option<UsageEvent>>;
 
     // =========================================================================
+    // Webhook Idempotency
+    // =========================================================================
+
+    /// Check if a webhook event has already been processed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
+    fn has_webhook_event(&self, event_id: &str) -> Result<bool>;
+
+    /// Record a webhook event as processed for replay protection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
+    fn record_webhook_event(&self, event_id: &str, source: &str) -> Result<()>;
+
+    // =========================================================================
     // Compound Operations
     // =========================================================================
 

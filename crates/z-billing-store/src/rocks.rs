@@ -287,6 +287,27 @@ impl Store for RocksStore {
     }
 
     // =========================================================================
+    // Webhook Idempotency
+    // =========================================================================
+
+    fn has_webhook_event(&self, event_id: &str) -> Result<bool> {
+        let key = format!("webhook:{event_id}");
+        self.has_usage_event(&key)
+    }
+
+    fn record_webhook_event(&self, event_id: &str, source: &str) -> Result<()> {
+        let key = format!("webhook:{event_id}");
+        let cf = self.cf_handle(schema::CF_USAGE_EVENTS)?;
+        let value = serde_json::json!({
+            "source": source,
+            "recorded_at": chrono::Utc::now().to_rfc3339()
+        });
+        self.db
+            .put_cf(&cf, key.as_bytes(), value.to_string().as_bytes())
+            .map_err(|e| StoreError::Database(e.to_string()))
+    }
+
+    // =========================================================================
     // Compound Operations
     // =========================================================================
 
