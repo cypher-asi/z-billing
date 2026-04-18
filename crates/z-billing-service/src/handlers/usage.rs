@@ -145,7 +145,9 @@ pub async fn report_usage(
         .unwrap_or_else(|| calculate_cost(&state.config.pricing, &body.metric));
 
     if cost_cents < 0 {
-        return Err(ApiError::BadRequest("cost_cents must not be negative".into()));
+        return Err(ApiError::BadRequest(
+            "cost_cents must not be negative".into(),
+        ));
     }
 
     // Build usage event
@@ -362,7 +364,7 @@ mod tests {
             model: Some("aura-gpt-5-4".to_string()),
         };
 
-        assert_eq!(effective_required_cents(&pricing, &request), 2);
+        assert_eq!(effective_required_cents(&pricing, &request), 3);
     }
 
     #[test]
@@ -475,7 +477,9 @@ async fn process_single_usage(
         .unwrap_or_else(|| calculate_cost(&state.config.pricing, &body.metric));
 
     if cost_cents < 0 {
-        return Err(ApiError::BadRequest("cost_cents must not be negative".into()));
+        return Err(ApiError::BadRequest(
+            "cost_cents must not be negative".into(),
+        ));
     }
 
     let (metric, quantity) = convert_metric(&body.metric);

@@ -28,18 +28,18 @@ impl Default for PricingConfig {
     fn default() -> Self {
         let mut llm_pricing = HashMap::new();
 
-        // Anthropic models — current (Claude 4.x)
+        // Anthropic models — current (Claude 4.x), priced at provider cost +20%
         let sonnet_pricing = LlmPricing {
-            input_credits_per_million: 300,   // $3.00 per 1M input tokens
-            output_credits_per_million: 1500, // $15.00 per 1M output tokens
+            input_credits_per_million: 360,   // $3.60 per 1M input tokens
+            output_credits_per_million: 1800, // $18.00 per 1M output tokens
         };
         let opus_pricing = LlmPricing {
-            input_credits_per_million: 500,   // $5.00 per 1M
-            output_credits_per_million: 2500, // $25.00 per 1M
+            input_credits_per_million: 600,   // $6.00 per 1M
+            output_credits_per_million: 3000, // $30.00 per 1M
         };
         let haiku_pricing = LlmPricing {
-            input_credits_per_million: 100,  // $1.00 per 1M
-            output_credits_per_million: 500, // $5.00 per 1M
+            input_credits_per_million: 120,  // $1.20 per 1M
+            output_credits_per_million: 600, // $6.00 per 1M
         };
 
         // Current model IDs
@@ -64,22 +64,34 @@ impl Default for PricingConfig {
             haiku_pricing.clone(),
         );
 
-        // Aura-managed Anthropic aliases
+        // Aura-managed Anthropic aliases (+20% premium over vendor base rates)
+        let aura_sonnet_pricing = LlmPricing {
+            input_credits_per_million: 360,
+            output_credits_per_million: 1800,
+        };
+        let aura_opus_pricing = LlmPricing {
+            input_credits_per_million: 600,
+            output_credits_per_million: 3000,
+        };
+        let aura_haiku_pricing = LlmPricing {
+            input_credits_per_million: 120,
+            output_credits_per_million: 600,
+        };
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-opus-4-7"),
-            opus_pricing.clone(),
+            aura_opus_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-opus-4-6"),
-            opus_pricing.clone(),
+            aura_opus_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-sonnet-4-6"),
-            sonnet_pricing.clone(),
+            aura_sonnet_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-haiku-4-5"),
-            haiku_pricing.clone(),
+            aura_haiku_pricing.clone(),
         );
 
         // Legacy model IDs (backward compatibility)
@@ -94,106 +106,94 @@ impl Default for PricingConfig {
         llm_pricing.insert(
             ModelKey::new("anthropic", "claude-3-haiku"),
             LlmPricing {
-                input_credits_per_million: 25,
-                output_credits_per_million: 125,
+                input_credits_per_million: 30,
+                output_credits_per_million: 150,
             },
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "claude-3-opus"),
             LlmPricing {
-                input_credits_per_million: 1500,
-                output_credits_per_million: 7500,
+                input_credits_per_million: 1800,
+                output_credits_per_million: 9000,
             },
         );
 
-        // OpenAI models
+        // OpenAI models, priced at provider cost +20%
         llm_pricing.insert(
             ModelKey::new("openai", "gpt-4o"),
             LlmPricing {
-                input_credits_per_million: 250,
-                output_credits_per_million: 1000,
+                input_credits_per_million: 300,
+                output_credits_per_million: 1200,
             },
         );
         llm_pricing.insert(
             ModelKey::new("openai", "gpt-4o-mini"),
             LlmPricing {
-                input_credits_per_million: 15,
-                output_credits_per_million: 60,
+                input_credits_per_million: 18,
+                output_credits_per_million: 72,
             },
         );
-        llm_pricing.insert(
-            ModelKey::new("openai", "gpt-5.4"),
-            LlmPricing {
-                input_credits_per_million: 250,
-                output_credits_per_million: 1500,
-            },
-        );
+        let gpt_5_4_pricing = LlmPricing {
+            input_credits_per_million: 300,
+            output_credits_per_million: 1800,
+        };
+        let gpt_5_4_mini_pricing = LlmPricing {
+            input_credits_per_million: 90,
+            output_credits_per_million: 540,
+        };
+        let gpt_5_4_nano_pricing = LlmPricing {
+            input_credits_per_million: 24,
+            output_credits_per_million: 150,
+        };
+        llm_pricing.insert(ModelKey::new("openai", "gpt-5.4"), gpt_5_4_pricing.clone());
         llm_pricing.insert(
             ModelKey::new("openai", "gpt-5.4-mini"),
-            LlmPricing {
-                input_credits_per_million: 75,
-                output_credits_per_million: 450,
-            },
+            gpt_5_4_mini_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("openai", "gpt-5.4-nano"),
-            LlmPricing {
-                input_credits_per_million: 20,
-                output_credits_per_million: 125,
-            },
+            gpt_5_4_nano_pricing.clone(),
         );
 
         // Aura-managed OpenAI aliases
-        llm_pricing.insert(
-            ModelKey::new("openai", "aura-gpt-5-4"),
-            LlmPricing {
-                input_credits_per_million: 250,
-                output_credits_per_million: 1500,
-            },
-        );
+        llm_pricing.insert(ModelKey::new("openai", "aura-gpt-5-4"), gpt_5_4_pricing);
         llm_pricing.insert(
             ModelKey::new("openai", "aura-gpt-5-4-mini"),
-            LlmPricing {
-                input_credits_per_million: 75,
-                output_credits_per_million: 450,
-            },
+            gpt_5_4_mini_pricing,
         );
         llm_pricing.insert(
             ModelKey::new("openai", "aura-gpt-5-4-nano"),
-            LlmPricing {
-                input_credits_per_million: 20,
-                output_credits_per_million: 125,
-            },
+            gpt_5_4_nano_pricing,
         );
 
-        // Google models
+        // Google models, corrected to current vendor pricing then marked up +20%
         llm_pricing.insert(
             ModelKey::new("google", "gemini-2.5-pro"),
             LlmPricing {
-                input_credits_per_million: 125,
-                output_credits_per_million: 500,
+                input_credits_per_million: 150,
+                output_credits_per_million: 1200,
             },
         );
         llm_pricing.insert(
             ModelKey::new("google", "gemini-2.5-flash"),
             LlmPricing {
-                input_credits_per_million: 8,
-                output_credits_per_million: 30,
+                input_credits_per_million: 36,
+                output_credits_per_million: 300,
             },
         );
 
-        // Aura-managed Fireworks aliases and upstream IDs
+        // Fireworks models, priced at provider cost +20%
         let deepseek_v3_2_pricing = LlmPricing {
-            input_credits_per_million: 56,
-            output_credits_per_million: 168,
+            input_credits_per_million: 67,
+            output_credits_per_million: 202,
         };
         let kimi_k2_5_pricing = LlmPricing {
-            input_credits_per_million: 60,
-            output_credits_per_million: 300,
+            input_credits_per_million: 72,
+            output_credits_per_million: 360,
         };
         let gpt_oss_120b_pricing = LlmPricing {
-            input_credits_per_million: 15,
-            output_credits_per_million: 60,
+            input_credits_per_million: 18,
+            output_credits_per_million: 72,
         };
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-deepseek-v3-2"),
@@ -379,11 +379,11 @@ mod tests {
     fn calculate_llm_cost_claude() {
         let config = PricingConfig::default();
 
-        // Claude Sonnet 4.6: 300 credits/1M input, 1500 credits/1M output
-        // 10,000 input tokens = 3 credits
-        // 5,000 output tokens = 7.5 -> 7 credits
+        // Claude Sonnet 4.6: 360 credits/1M input, 1800 credits/1M output
+        // 10,000 input tokens = 3.6 -> 3 credits
+        // 5,000 output tokens = 9 credits
         let cost = config.calculate_llm_cost("anthropic", "claude-sonnet-4-6", 10_000, 5_000);
-        assert_eq!(cost, 10); // 3 + 7 = 10
+        assert_eq!(cost, 12); // 3 + 9 = 12
     }
 
     #[test]
@@ -410,11 +410,11 @@ mod tests {
 
         assert_eq!(
             config.minimum_llm_reserve_cents("anthropic", "aura-claude-opus-4-7"),
-            4
+            5
         );
         assert_eq!(
             config.minimum_llm_reserve_cents("openai", "aura-gpt-5-4"),
-            2
+            3
         );
         assert_eq!(
             config.minimum_llm_reserve_cents("fireworks", "aura-oss-120b"),
