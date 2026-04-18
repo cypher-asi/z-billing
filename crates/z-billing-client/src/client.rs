@@ -172,6 +172,39 @@ impl ZBillingClient {
         let request = CheckBalanceRequest {
             user_id: user_id.into(),
             required_cents,
+            provider: None,
+            model: None,
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("x-service-name", &self.service_name)
+            .json(&request)
+            .send()
+            .await?;
+
+        self.handle_response(response).await
+    }
+
+    /// Check balance using a model-aware reserve derived by z-billing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or the server returns an error.
+    pub async fn check_model_balance(
+        &self,
+        user_id: impl Into<String>,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Result<CheckBalanceResponse, ClientError> {
+        let url = format!("{}/v1/usage/check", self.base_url);
+        let request = CheckBalanceRequest {
+            user_id: user_id.into(),
+            required_cents: 0,
+            provider: Some(provider.into()),
+            model: Some(model.into()),
         };
 
         let response = self

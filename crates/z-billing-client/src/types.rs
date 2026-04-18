@@ -146,6 +146,12 @@ pub struct CheckBalanceRequest {
     pub user_id: String,
     /// Required amount in cents.
     pub required_cents: i64,
+    /// Optional provider name for model-aware reserve lookup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Optional model name for model-aware reserve lookup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// Balance check response.

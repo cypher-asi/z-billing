@@ -298,6 +298,10 @@ pub struct CheckBalanceRequest {
     pub user_id: String,
     /// Required amount in cents.
     pub required_cents: i64,
+    /// Optional provider name for model-aware reserve calculation.
+    pub provider: Option<String>,
+    /// Optional model name for model-aware reserve calculation.
+    pub model: Option<String>,
 }
 
 /// Check balance response.
@@ -309,6 +313,18 @@ pub struct CheckBalanceResponse {
     pub balance_cents: i64,
     /// Required amount.
     pub required_cents: i64,
+}
+
+fn effective_required_cents(
+    pricing: &z_billing_core::PricingConfig,
+    request: &CheckBalanceRequest,
+) -> i64 {
+    match (request.provider.as_deref(), request.model.as_deref()) {
+        (Some(provider), Some(model)) if request.required_cents <= 0 => {
+            pricing.minimum_llm_reserve_cents(provider, model)
+        }
+        _ => request.required_cents,
+    }
 }
 
 /// Check if a user has sufficient balance.
@@ -323,12 +339,44 @@ pub async fn check_balance(
         .map_err(|_| ApiError::BadRequest("Invalid user ID".into()))?;
 
     let account = get_or_create_account(state.store.as_ref(), &user_id)?;
+    let required_cents = effective_required_cents(&state.config.pricing, &body);
 
     Ok(Json(CheckBalanceResponse {
-        sufficient: account.balance_cents >= body.required_cents,
+        sufficient: account.balance_cents >= required_cents,
         balance_cents: account.balance_cents,
-        required_cents: body.required_cents,
+        required_cents,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_required_cents, CheckBalanceRequest};
+
+    #[test]
+    fn effective_required_cents_uses_model_pricing_for_zero_required_balance() {
+        let pricing = z_billing_core::PricingConfig::default();
+        let request = CheckBalanceRequest {
+            user_id: "user-1".to_string(),
+            required_cents: 0,
+            provider: Some("openai".to_string()),
+            model: Some("aura-gpt-5-4".to_string()),
+        };
+
+        assert_eq!(effective_required_cents(&pricing, &request), 2);
+    }
+
+    #[test]
+    fn effective_required_cents_preserves_explicit_requirement() {
+        let pricing = z_billing_core::PricingConfig::default();
+        let request = CheckBalanceRequest {
+            user_id: "user-1".to_string(),
+            required_cents: 50,
+            provider: Some("openai".to_string()),
+            model: Some("aura-gpt-5-4".to_string()),
+        };
+
+        assert_eq!(effective_required_cents(&pricing, &request), 50);
+    }
 }
 
 // ============================================================================
