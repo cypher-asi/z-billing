@@ -2,6 +2,7 @@
 //!
 //! This module defines pricing for compute resources and LLM models.
 
+use crate::account::Plan;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -28,18 +29,18 @@ impl Default for PricingConfig {
     fn default() -> Self {
         let mut llm_pricing = HashMap::new();
 
-        // Anthropic models — current (Claude 4.x), priced at provider cost +20%
+        // Anthropic models — current (Claude 4.x) at vendor/base rates
         let sonnet_pricing = LlmPricing {
-            input_credits_per_million: 360,   // $3.60 per 1M input tokens
-            output_credits_per_million: 1800, // $18.00 per 1M output tokens
+            input_credits_per_million: 300,   // $3.00 per 1M input tokens
+            output_credits_per_million: 1500, // $15.00 per 1M output tokens
         };
         let opus_pricing = LlmPricing {
-            input_credits_per_million: 600,   // $6.00 per 1M
-            output_credits_per_million: 3000, // $30.00 per 1M
+            input_credits_per_million: 500,   // $5.00 per 1M
+            output_credits_per_million: 2500, // $25.00 per 1M
         };
         let haiku_pricing = LlmPricing {
-            input_credits_per_million: 120,  // $1.20 per 1M
-            output_credits_per_million: 600, // $6.00 per 1M
+            input_credits_per_million: 100,  // $1.00 per 1M
+            output_credits_per_million: 500, // $5.00 per 1M
         };
 
         // Current model IDs
@@ -63,35 +64,21 @@ impl Default for PricingConfig {
             ModelKey::new("anthropic", "claude-haiku-4-5"),
             haiku_pricing.clone(),
         );
-
-        // Aura-managed Anthropic aliases (+20% premium over vendor base rates)
-        let aura_sonnet_pricing = LlmPricing {
-            input_credits_per_million: 360,
-            output_credits_per_million: 1800,
-        };
-        let aura_opus_pricing = LlmPricing {
-            input_credits_per_million: 600,
-            output_credits_per_million: 3000,
-        };
-        let aura_haiku_pricing = LlmPricing {
-            input_credits_per_million: 120,
-            output_credits_per_million: 600,
-        };
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-opus-4-7"),
-            aura_opus_pricing.clone(),
+            opus_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-opus-4-6"),
-            aura_opus_pricing.clone(),
+            opus_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-sonnet-4-6"),
-            aura_sonnet_pricing.clone(),
+            sonnet_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-haiku-4-5"),
-            aura_haiku_pricing.clone(),
+            haiku_pricing.clone(),
         );
 
         // Legacy model IDs (backward compatibility)
@@ -106,46 +93,49 @@ impl Default for PricingConfig {
         llm_pricing.insert(
             ModelKey::new("anthropic", "claude-3-haiku"),
             LlmPricing {
-                input_credits_per_million: 30,
-                output_credits_per_million: 150,
+                input_credits_per_million: 25,
+                output_credits_per_million: 125,
             },
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "claude-3-opus"),
             LlmPricing {
-                input_credits_per_million: 1800,
-                output_credits_per_million: 9000,
+                input_credits_per_million: 1500,
+                output_credits_per_million: 7500,
             },
         );
 
-        // OpenAI models, priced at provider cost +20%
+        // OpenAI models at vendor/base rates
         llm_pricing.insert(
             ModelKey::new("openai", "gpt-4o"),
             LlmPricing {
-                input_credits_per_million: 300,
-                output_credits_per_million: 1200,
+                input_credits_per_million: 250,
+                output_credits_per_million: 1000,
             },
         );
         llm_pricing.insert(
             ModelKey::new("openai", "gpt-4o-mini"),
             LlmPricing {
-                input_credits_per_million: 18,
-                output_credits_per_million: 72,
+                input_credits_per_million: 15,
+                output_credits_per_million: 60,
             },
         );
         let gpt_5_4_pricing = LlmPricing {
-            input_credits_per_million: 300,
-            output_credits_per_million: 1800,
+            input_credits_per_million: 250,
+            output_credits_per_million: 1500,
         };
         let gpt_5_4_mini_pricing = LlmPricing {
-            input_credits_per_million: 90,
-            output_credits_per_million: 540,
+            input_credits_per_million: 75,
+            output_credits_per_million: 450,
         };
         let gpt_5_4_nano_pricing = LlmPricing {
-            input_credits_per_million: 24,
-            output_credits_per_million: 150,
+            input_credits_per_million: 20,
+            output_credits_per_million: 125,
         };
-        llm_pricing.insert(ModelKey::new("openai", "gpt-5.4"), gpt_5_4_pricing.clone());
+        llm_pricing.insert(
+            ModelKey::new("openai", "gpt-5.4"),
+            gpt_5_4_pricing.clone(),
+        );
         llm_pricing.insert(
             ModelKey::new("openai", "gpt-5.4-mini"),
             gpt_5_4_mini_pricing.clone(),
@@ -154,9 +144,10 @@ impl Default for PricingConfig {
             ModelKey::new("openai", "gpt-5.4-nano"),
             gpt_5_4_nano_pricing.clone(),
         );
-
-        // Aura-managed OpenAI aliases
-        llm_pricing.insert(ModelKey::new("openai", "aura-gpt-5-4"), gpt_5_4_pricing);
+        llm_pricing.insert(
+            ModelKey::new("openai", "aura-gpt-5-4"),
+            gpt_5_4_pricing,
+        );
         llm_pricing.insert(
             ModelKey::new("openai", "aura-gpt-5-4-mini"),
             gpt_5_4_mini_pricing,
@@ -166,34 +157,34 @@ impl Default for PricingConfig {
             gpt_5_4_nano_pricing,
         );
 
-        // Google models, corrected to current vendor pricing then marked up +20%
+        // Google models at vendor/base rates
         llm_pricing.insert(
             ModelKey::new("google", "gemini-2.5-pro"),
             LlmPricing {
-                input_credits_per_million: 150,
-                output_credits_per_million: 1200,
+                input_credits_per_million: 125,
+                output_credits_per_million: 1000,
             },
         );
         llm_pricing.insert(
             ModelKey::new("google", "gemini-2.5-flash"),
             LlmPricing {
-                input_credits_per_million: 36,
-                output_credits_per_million: 300,
+                input_credits_per_million: 30,
+                output_credits_per_million: 250,
             },
         );
 
-        // Fireworks models, priced at provider cost +20%
+        // Fireworks-hosted open-weight models at vendor/base rates.
         let deepseek_v3_2_pricing = LlmPricing {
-            input_credits_per_million: 67,
-            output_credits_per_million: 202,
+            input_credits_per_million: 56,
+            output_credits_per_million: 168,
         };
-        let kimi_k2_5_pricing = LlmPricing {
-            input_credits_per_million: 72,
-            output_credits_per_million: 360,
+        let kimi_k2_pricing = LlmPricing {
+            input_credits_per_million: 60,
+            output_credits_per_million: 300,
         };
         let gpt_oss_120b_pricing = LlmPricing {
-            input_credits_per_million: 18,
-            output_credits_per_million: 72,
+            input_credits_per_million: 15,
+            output_credits_per_million: 60,
         };
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-deepseek-v3-2"),
@@ -205,11 +196,19 @@ impl Default for PricingConfig {
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-kimi-k2-5"),
-            kimi_k2_5_pricing.clone(),
+            kimi_k2_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p5"),
-            kimi_k2_5_pricing,
+            kimi_k2_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-kimi-k2-6"),
+            kimi_k2_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p6"),
+            kimi_k2_pricing,
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-oss-120b"),
@@ -234,6 +233,23 @@ impl Default for PricingConfig {
 }
 
 impl PricingConfig {
+    fn llm_markup_percent(plan: &Plan) -> i64 {
+        match plan {
+            Plan::Pro => 10,
+            Plan::Free | Plan::Standard | Plan::Enterprise => 20,
+        }
+    }
+
+    fn marked_up_llm_pricing(&self, pricing: &LlmPricing, plan: &Plan) -> LlmPricing {
+        let markup_percent = Self::llm_markup_percent(plan);
+        LlmPricing {
+            input_credits_per_million:
+                (pricing.input_credits_per_million * (100 + markup_percent) + 50) / 100,
+            output_credits_per_million:
+                (pricing.output_credits_per_million * (100 + markup_percent) + 50) / 100,
+        }
+    }
+
     /// Calculate the cost in cents for LLM token usage.
     ///
     /// Minimum cost is 1 credit for any non-zero usage.
@@ -268,20 +284,64 @@ impl PricingConfig {
         }
     }
 
-    /// Calculate the minimum balance reserve in cents for starting a short text turn.
-    ///
-    /// This uses the same pricing table as final billing so preflight checks stay aligned.
-    /// The reserve assumes a short turn of roughly 2k input + 1k output tokens.
+    /// Calculate the cost in cents for LLM token usage after applying the plan markup.
     #[must_use]
-    pub fn minimum_llm_reserve_cents(&self, provider: &str, model: &str) -> i64 {
+    pub fn calculate_llm_cost_for_plan(
+        &self,
+        provider: &str,
+        model: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        plan: &Plan,
+    ) -> i64 {
         let key = ModelKey::new(provider, model);
         let pricing = self
             .llm_pricing
             .get(&key)
             .unwrap_or(&self.default_llm_pricing);
+        let marked_up_pricing = self.marked_up_llm_pricing(pricing, plan);
 
-        let reserve_numerator = 2_000_i64 * pricing.input_credits_per_million
-            + 1_000_i64 * pricing.output_credits_per_million;
+        let input_cost = (i64::try_from(input_tokens).unwrap_or(i64::MAX)
+            * marked_up_pricing.input_credits_per_million)
+            / 1_000_000;
+        let output_cost = (i64::try_from(output_tokens).unwrap_or(i64::MAX)
+            * marked_up_pricing.output_credits_per_million)
+            / 1_000_000;
+        let total = input_cost + output_cost;
+
+        if total == 0 && (input_tokens > 0 || output_tokens > 0) {
+            1
+        } else {
+            total
+        }
+    }
+
+    /// Calculate the minimum balance reserve in cents for starting a short text turn.
+    ///
+    /// The reserve assumes a short turn of roughly 2k input + 1k output tokens.
+    #[must_use]
+    pub fn minimum_llm_reserve_cents(&self, provider: &str, model: &str) -> i64 {
+        self.minimum_llm_reserve_cents_for_plan(provider, model, &Plan::Free)
+    }
+
+    /// Calculate the minimum balance reserve in cents for starting a short text turn,
+    /// taking the user's plan markup into account.
+    #[must_use]
+    pub fn minimum_llm_reserve_cents_for_plan(
+        &self,
+        provider: &str,
+        model: &str,
+        plan: &Plan,
+    ) -> i64 {
+        let key = ModelKey::new(provider, model);
+        let pricing = self
+            .llm_pricing
+            .get(&key)
+            .unwrap_or(&self.default_llm_pricing);
+        let marked_up_pricing = self.marked_up_llm_pricing(pricing, plan);
+
+        let reserve_numerator = 2_000_i64 * marked_up_pricing.input_credits_per_million
+            + 1_000_i64 * marked_up_pricing.output_credits_per_million;
         ((reserve_numerator + 999_999) / 1_000_000).max(1)
     }
 
@@ -362,14 +422,10 @@ mod tests {
             .contains_key(&ModelKey::new("anthropic", "claude-opus-4-6")));
         assert!(config
             .llm_pricing
-            .contains_key(&ModelKey::new("anthropic", "aura-claude-opus-4-7")));
+            .contains_key(&ModelKey::new("openai", "aura-gpt-5-4")));
         assert!(config
             .llm_pricing
-            .contains_key(&ModelKey::new("openai", "aura-gpt-5-4-mini")));
-        assert!(config
-            .llm_pricing
-            .contains_key(&ModelKey::new("fireworks", "aura-oss-120b")));
-        // Legacy models still present
+            .contains_key(&ModelKey::new("fireworks", "aura-kimi-k2-6")));
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("anthropic", "claude-3-5-sonnet")));
@@ -379,11 +435,49 @@ mod tests {
     fn calculate_llm_cost_claude() {
         let config = PricingConfig::default();
 
-        // Claude Sonnet 4.6: 360 credits/1M input, 1800 credits/1M output
-        // 10,000 input tokens = 3.6 -> 3 credits
-        // 5,000 output tokens = 9 credits
+        // Claude Sonnet 4.6: 300 credits/1M input, 1500 credits/1M output
+        // 10,000 input tokens = 3 credits
+        // 5,000 output tokens = 7.5 -> 7 credits
         let cost = config.calculate_llm_cost("anthropic", "claude-sonnet-4-6", 10_000, 5_000);
-        assert_eq!(cost, 12); // 3 + 9 = 12
+        assert_eq!(cost, 10); // 3 + 7 = 10
+    }
+
+    #[test]
+    fn calculate_llm_cost_applies_plan_markup() {
+        let config = PricingConfig::default();
+
+        let free_cost = config.calculate_llm_cost_for_plan(
+            "anthropic",
+            "claude-sonnet-4-6",
+            10_000,
+            5_000,
+            &Plan::Free,
+        );
+        let pro_cost = config.calculate_llm_cost_for_plan(
+            "anthropic",
+            "claude-sonnet-4-6",
+            10_000,
+            5_000,
+            &Plan::Pro,
+        );
+
+        assert_eq!(free_cost, 12);
+        assert_eq!(pro_cost, 11);
+    }
+
+    #[test]
+    fn calculate_llm_cost_for_plan_matches_small_usage_rounding_behavior() {
+        let config = PricingConfig::default();
+
+        let free_cost = config.calculate_llm_cost_for_plan(
+            "anthropic",
+            "claude-sonnet-4-6",
+            2_000,
+            2_000,
+            &Plan::Free,
+        );
+
+        assert_eq!(free_cost, 3);
     }
 
     #[test]
@@ -410,7 +504,7 @@ mod tests {
 
         assert_eq!(
             config.minimum_llm_reserve_cents("anthropic", "aura-claude-opus-4-7"),
-            5
+            6
         );
         assert_eq!(
             config.minimum_llm_reserve_cents("openai", "aura-gpt-5-4"),
@@ -419,6 +513,28 @@ mod tests {
         assert_eq!(
             config.minimum_llm_reserve_cents("fireworks", "aura-oss-120b"),
             1
+        );
+    }
+
+    #[test]
+    fn minimum_llm_reserve_cents_for_plan_uses_lower_pro_markup() {
+        let config = PricingConfig::default();
+
+        assert_eq!(
+            config.minimum_llm_reserve_cents_for_plan(
+                "anthropic",
+                "claude-sonnet-4-6",
+                &Plan::Free,
+            ),
+            3
+        );
+        assert_eq!(
+            config.minimum_llm_reserve_cents_for_plan(
+                "anthropic",
+                "claude-sonnet-4-6",
+                &Plan::Pro,
+            ),
+            2
         );
     }
 

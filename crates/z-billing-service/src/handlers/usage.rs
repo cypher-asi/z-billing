@@ -8,8 +8,8 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use z_billing_core::{
-    Account, AgentId, CreditTransaction, LlmProvider, TokenDirection, UsageEvent, UsageMetric,
-    UsageSource, UserId,
+    Account, AgentId, CreditTransaction, LlmProvider, Plan, TokenDirection, UsageEvent,
+    UsageMetric, UsageSource, UserId,
 };
 use z_billing_store::Store;
 
@@ -139,10 +139,13 @@ pub async fn report_usage(
         .transpose()
         .map_err(|_| ApiError::BadRequest("Invalid agent ID".into()))?;
 
+    // Get or create account before cost calculation so billing can reflect the user's plan.
+    let account = get_or_create_account(state.store.as_ref(), &user_id)?;
+
     // Calculate cost if not provided
     let cost_cents = body
         .cost_cents
-        .unwrap_or_else(|| calculate_cost(&state.config.pricing, &body.metric));
+        .unwrap_or_else(|| calculate_cost(&state.config.pricing, &account.current_plan(), &body.metric));
 
     if cost_cents < 0 {
         return Err(ApiError::BadRequest(
@@ -163,9 +166,6 @@ pub async fn report_usage(
         timestamp: chrono::Utc::now(),
         metadata: body.metadata.clone(),
     };
-
-    // Get or create account
-    let account = get_or_create_account(state.store.as_ref(), &user_id)?;
 
     let new_balance = account.balance_cents - cost_cents;
 
@@ -319,11 +319,12 @@ pub struct CheckBalanceResponse {
 
 fn effective_required_cents(
     pricing: &z_billing_core::PricingConfig,
+    plan: &Plan,
     request: &CheckBalanceRequest,
 ) -> i64 {
     match (request.provider.as_deref(), request.model.as_deref()) {
         (Some(provider), Some(model)) if request.required_cents <= 0 => {
-            pricing.minimum_llm_reserve_cents(provider, model)
+            pricing.minimum_llm_reserve_cents_for_plan(provider, model, plan)
         }
         _ => request.required_cents,
     }
@@ -341,7 +342,8 @@ pub async fn check_balance(
         .map_err(|_| ApiError::BadRequest("Invalid user ID".into()))?;
 
     let account = get_or_create_account(state.store.as_ref(), &user_id)?;
-    let required_cents = effective_required_cents(&state.config.pricing, &body);
+    let required_cents =
+        effective_required_cents(&state.config.pricing, &account.current_plan(), &body);
 
     Ok(Json(CheckBalanceResponse {
         sufficient: account.balance_cents >= required_cents,
@@ -352,6 +354,8 @@ pub async fn check_balance(
 
 #[cfg(test)]
 mod tests {
+    use z_billing_core::Plan;
+
     use super::{effective_required_cents, CheckBalanceRequest};
 
     #[test]
@@ -364,7 +368,20 @@ mod tests {
             model: Some("aura-gpt-5-4".to_string()),
         };
 
-        assert_eq!(effective_required_cents(&pricing, &request), 3);
+        assert_eq!(effective_required_cents(&pricing, &Plan::Free, &request), 3);
+    }
+
+    #[test]
+    fn effective_required_cents_uses_lower_pro_reserve() {
+        let pricing = z_billing_core::PricingConfig::default();
+        let request = CheckBalanceRequest {
+            user_id: "user-1".to_string(),
+            required_cents: 0,
+            provider: Some("openai".to_string()),
+            model: Some("aura-gpt-5-4".to_string()),
+        };
+
+        assert_eq!(effective_required_cents(&pricing, &Plan::Pro, &request), 2);
     }
 
     #[test]
@@ -377,7 +394,7 @@ mod tests {
             model: Some("aura-gpt-5-4".to_string()),
         };
 
-        assert_eq!(effective_required_cents(&pricing, &request), 50);
+        assert_eq!(effective_required_cents(&pricing, &Plan::Free, &request), 50);
     }
 }
 
@@ -472,9 +489,14 @@ async fn process_single_usage(
         .transpose()
         .map_err(|_| ApiError::BadRequest("Invalid agent ID".into()))?;
 
+    let account = state
+        .store
+        .get_account(&user_id)?
+        .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
+
     let cost_cents = body
         .cost_cents
-        .unwrap_or_else(|| calculate_cost(&state.config.pricing, &body.metric));
+        .unwrap_or_else(|| calculate_cost(&state.config.pricing, &account.current_plan(), &body.metric));
 
     if cost_cents < 0 {
         return Err(ApiError::BadRequest(
@@ -495,11 +517,6 @@ async fn process_single_usage(
         metadata: body.metadata.clone(),
     };
 
-    let account = state
-        .store
-        .get_account(&user_id)?
-        .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
-
     let new_balance = account.balance_cents - cost_cents;
     let description = format_usage_description(&body.metric, service_name);
     let tx = CreditTransaction::usage(user_id, cost_cents, new_balance, description, body.metadata);
@@ -509,14 +526,24 @@ async fn process_single_usage(
     Ok(cost_cents)
 }
 
-fn calculate_cost(pricing: &z_billing_core::PricingConfig, metric: &UsageMetricRequest) -> i64 {
+fn calculate_cost(
+    pricing: &z_billing_core::PricingConfig,
+    plan: &Plan,
+    metric: &UsageMetricRequest,
+) -> i64 {
     match metric {
         UsageMetricRequest::LlmTokens {
             provider,
             model,
             input_tokens,
             output_tokens,
-        } => pricing.calculate_llm_cost(provider, model, *input_tokens, *output_tokens),
+        } => pricing.calculate_llm_cost_for_plan(
+            provider,
+            model,
+            *input_tokens,
+            *output_tokens,
+            plan,
+        ),
         UsageMetricRequest::Compute {
             cpu_hours,
             memory_gb_hours,

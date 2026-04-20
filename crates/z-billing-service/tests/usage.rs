@@ -4,6 +4,8 @@ mod common;
 
 use common::TestHarness;
 use serde_json::json;
+use z_billing_core::{Plan, Subscription, SubscriptionStatus};
+use z_billing_store::Store;
 
 // ============================================================================
 // Helper to create a funded account
@@ -33,6 +35,27 @@ async fn create_funded_account(harness: &TestHarness, balance_cents: i64) {
             .await
             .assert_status_ok();
     }
+}
+
+fn set_plan(harness: &TestHarness, plan: Plan) {
+    let mut account = harness
+        .store
+        .get_account(&harness.test_user_id)
+        .expect("Failed to load account")
+        .expect("Account should exist");
+    let now = chrono::Utc::now();
+    account.subscription = Some(Subscription {
+        plan,
+        status: SubscriptionStatus::Active,
+        current_period_start: now,
+        current_period_end: now + chrono::Duration::days(30),
+        lago_subscription_id: "test-subscription".to_string(),
+        created_at: now,
+    });
+    harness
+        .store
+        .put_account(&account)
+        .expect("Failed to update account plan");
 }
 
 // ============================================================================
@@ -67,6 +90,66 @@ async fn report_llm_usage_success() {
     assert_eq!(body["success"], true);
     assert!(body["cost_cents"].as_i64().unwrap() > 0);
     assert!(body["balance_cents"].as_i64().unwrap() < 10000);
+}
+
+#[tokio::test]
+async fn report_llm_usage_applies_pro_markup_discount() {
+    let harness = TestHarness::new();
+    create_funded_account(&harness, 10000).await;
+    set_plan(&harness, Plan::Pro);
+
+    let response = harness
+        .server
+        .post("/v1/usage")
+        .add_header("x-api-key", &harness.service_api_key)
+        .add_header("x-service-name", "aura-runtime")
+        .json(&json!({
+            "event_id": "evt_test_pro_markup",
+            "user_id": harness.test_user_id.to_string(),
+            "metric": {
+                "type": "llm_tokens",
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-6",
+                "input_tokens": 10000,
+                "output_tokens": 5000
+            }
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["cost_cents"], 11);
+    assert_eq!(body["balance_cents"], 9989);
+}
+
+#[tokio::test]
+async fn report_llm_usage_keeps_twenty_percent_markup_for_non_pro() {
+    let harness = TestHarness::new();
+    create_funded_account(&harness, 10000).await;
+    set_plan(&harness, Plan::Standard);
+
+    let response = harness
+        .server
+        .post("/v1/usage")
+        .add_header("x-api-key", &harness.service_api_key)
+        .add_header("x-service-name", "aura-runtime")
+        .json(&json!({
+            "event_id": "evt_test_standard_markup",
+            "user_id": harness.test_user_id.to_string(),
+            "metric": {
+                "type": "llm_tokens",
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-6",
+                "input_tokens": 10000,
+                "output_tokens": 5000
+            }
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["cost_cents"], 12);
+    assert_eq!(body["balance_cents"], 9988);
 }
 
 #[tokio::test]
@@ -224,7 +307,7 @@ async fn report_usage_duplicate_event_fails() {
 }
 
 #[tokio::test]
-async fn report_usage_nonexistent_account_fails() {
+async fn report_usage_nonexistent_account_creates_account_then_fails_for_insufficient_credits() {
     let harness = TestHarness::new();
     // Don't create an account
 
@@ -244,7 +327,12 @@ async fn report_usage_nonexistent_account_fails() {
         }))
         .await;
 
-    response.assert_status_not_found();
+    assert_eq!(response.status_code(), 402);
+    let body: serde_json::Value = response.json();
+    assert!(body["error"]["code"]
+        .as_str()
+        .unwrap()
+        .contains("insufficient"));
 }
 
 // ============================================================================
