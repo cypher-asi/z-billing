@@ -8,8 +8,8 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use z_billing_core::{
-    Account, AgentId, CreditTransaction, LlmProvider, TokenDirection, UsageEvent, UsageMetric,
-    UsageSource, UserId,
+    Account, AgentId, CreditTransaction, LlmProvider, Plan, TokenDirection, UsageEvent,
+    UsageMetric, UsageSource, UserId,
 };
 use z_billing_store::Store;
 
@@ -139,10 +139,13 @@ pub async fn report_usage(
         .transpose()
         .map_err(|_| ApiError::BadRequest("Invalid agent ID".into()))?;
 
+    // Get or create account before cost calculation so billing can reflect the user's plan.
+    let account = get_or_create_account(state.store.as_ref(), &user_id)?;
+
     // Calculate cost if not provided
     let cost_cents = body
         .cost_cents
-        .unwrap_or_else(|| calculate_cost(&state.config.pricing, &body.metric));
+        .unwrap_or_else(|| calculate_cost(&state.config.pricing, &account.current_plan(), &body.metric));
 
     // Build usage event
     let (metric, quantity) = convert_metric(&body.metric);
@@ -157,9 +160,6 @@ pub async fn report_usage(
         timestamp: chrono::Utc::now(),
         metadata: body.metadata.clone(),
     };
-
-    // Get or create account
-    let account = get_or_create_account(state.store.as_ref(), &user_id)?;
 
     let new_balance = account.balance_cents - cost_cents;
 
@@ -418,9 +418,14 @@ async fn process_single_usage(
         .transpose()
         .map_err(|_| ApiError::BadRequest("Invalid agent ID".into()))?;
 
+    let account = state
+        .store
+        .get_account(&user_id)?
+        .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
+
     let cost_cents = body
         .cost_cents
-        .unwrap_or_else(|| calculate_cost(&state.config.pricing, &body.metric));
+        .unwrap_or_else(|| calculate_cost(&state.config.pricing, &account.current_plan(), &body.metric));
 
     let (metric, quantity) = convert_metric(&body.metric);
     let event = UsageEvent {
@@ -435,11 +440,6 @@ async fn process_single_usage(
         metadata: body.metadata.clone(),
     };
 
-    let account = state
-        .store
-        .get_account(&user_id)?
-        .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
-
     let new_balance = account.balance_cents - cost_cents;
     let description = format_usage_description(&body.metric, service_name);
     let tx = CreditTransaction::usage(user_id, cost_cents, new_balance, description, body.metadata);
@@ -449,14 +449,24 @@ async fn process_single_usage(
     Ok(cost_cents)
 }
 
-fn calculate_cost(pricing: &z_billing_core::PricingConfig, metric: &UsageMetricRequest) -> i64 {
+fn calculate_cost(
+    pricing: &z_billing_core::PricingConfig,
+    plan: &Plan,
+    metric: &UsageMetricRequest,
+) -> i64 {
     match metric {
         UsageMetricRequest::LlmTokens {
             provider,
             model,
             input_tokens,
             output_tokens,
-        } => pricing.calculate_llm_cost(provider, model, *input_tokens, *output_tokens),
+        } => pricing.calculate_llm_cost_for_plan(
+            provider,
+            model,
+            *input_tokens,
+            *output_tokens,
+            plan,
+        ),
         UsageMetricRequest::Compute {
             cpu_hours,
             memory_gb_hours,

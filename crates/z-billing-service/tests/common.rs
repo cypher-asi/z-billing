@@ -16,6 +16,8 @@ use z_billing_store::RocksStore;
 pub struct TestHarness {
     /// The test server for making HTTP requests.
     pub server: TestServer,
+    /// The backing store for direct setup and assertions.
+    pub store: Arc<RocksStore>,
     /// Temporary directory for the database (kept alive for test duration).
     pub _temp_dir: TempDir,
     /// A test user ID for authenticated requests.
@@ -30,16 +32,18 @@ impl TestHarness {
     /// Create a new test harness with a fresh database.
     pub fn new() -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let store = RocksStore::open(temp_dir.path()).expect("Failed to open store");
+        let store = Arc::new(RocksStore::open(temp_dir.path()).expect("Failed to open store"));
 
         let service_api_key = "test-service-key".to_string();
         let admin_api_key = "test-admin-key".to_string();
 
         let config = ServiceConfig {
             listen_addr: "127.0.0.1:0".into(),
+            database_url: None,
             data_dir: temp_dir.path().to_string_lossy().to_string(),
             auth_base_url: "http://localhost".into(),
             auth_audience: "z-billing".into(),
+            auth_cookie_secret: None,
             service_api_key: Some(service_api_key.clone()),
             admin_api_key: Some("test-admin-key".to_string()),
             lago_api_url: None,
@@ -55,7 +59,7 @@ impl TestHarness {
             pricing: z_billing_core::PricingConfig::default(),
         };
 
-        let state = AppState::new(Arc::new(store), config);
+        let state = AppState::new(store.clone(), config);
         let router: Router = create_router(state);
 
         let server = TestServer::new(router).expect("Failed to create test server");
@@ -63,6 +67,7 @@ impl TestHarness {
 
         Self {
             server,
+            store,
             _temp_dir: temp_dir,
             test_user_id,
             service_api_key,
