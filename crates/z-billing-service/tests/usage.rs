@@ -93,10 +93,9 @@ async fn report_llm_usage_success() {
 }
 
 #[tokio::test]
-async fn report_llm_usage_applies_pro_markup_discount() {
+async fn report_llm_usage_applies_zero_pro_markup_discount() {
     let harness = TestHarness::new();
     create_funded_account(&harness, 10000).await;
-    set_plan(&harness, Plan::Pro);
 
     let response = harness
         .server
@@ -112,7 +111,8 @@ async fn report_llm_usage_applies_pro_markup_discount() {
                 "model": "claude-sonnet-4-6",
                 "input_tokens": 10000,
                 "output_tokens": 5000
-            }
+            },
+            "zero_pro_user": true
         }))
         .await;
 
@@ -123,10 +123,10 @@ async fn report_llm_usage_applies_pro_markup_discount() {
 }
 
 #[tokio::test]
-async fn report_llm_usage_keeps_twenty_percent_markup_for_non_pro() {
+async fn report_llm_usage_keeps_twenty_percent_markup_without_zero_pro_entitlement() {
     let harness = TestHarness::new();
     create_funded_account(&harness, 10000).await;
-    set_plan(&harness, Plan::Standard);
+    set_plan(&harness, Plan::Pro);
 
     let response = harness
         .server
@@ -150,6 +150,39 @@ async fn report_llm_usage_keeps_twenty_percent_markup_for_non_pro() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["cost_cents"], 12);
     assert_eq!(body["balance_cents"], 9988);
+}
+
+#[tokio::test]
+async fn report_llm_usage_reads_zero_pro_from_metadata_alias() {
+    let harness = TestHarness::new();
+    create_funded_account(&harness, 10000).await;
+    set_plan(&harness, Plan::Standard);
+
+    let response = harness
+        .server
+        .post("/v1/usage")
+        .add_header("x-api-key", &harness.service_api_key)
+        .add_header("x-service-name", "aura-runtime")
+        .json(&json!({
+            "event_id": "evt_test_zero_pro_metadata",
+            "user_id": harness.test_user_id.to_string(),
+            "metric": {
+                "type": "llm_tokens",
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-6",
+                "input_tokens": 10000,
+                "output_tokens": 5000
+            },
+            "metadata": {
+                "is_zero_pro": true
+            }
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["cost_cents"], 11);
+    assert_eq!(body["balance_cents"], 9989);
 }
 
 #[tokio::test]

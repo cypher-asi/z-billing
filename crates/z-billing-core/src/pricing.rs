@@ -245,20 +245,24 @@ impl Default for PricingConfig {
 }
 
 impl PricingConfig {
-    fn llm_markup_percent(plan: &Plan) -> i64 {
-        match plan {
-            Plan::Pro => 10,
-            Plan::Free | Plan::Standard | Plan::Enterprise => 20,
+    fn llm_markup_percent(is_zero_pro_user: bool) -> i64 {
+        if is_zero_pro_user {
+            10
+        } else {
+            20
         }
     }
 
-    fn marked_up_llm_pricing(&self, pricing: &LlmPricing, plan: &Plan) -> LlmPricing {
-        let markup_percent = Self::llm_markup_percent(plan);
+    fn marked_up_llm_pricing(&self, pricing: &LlmPricing, is_zero_pro_user: bool) -> LlmPricing {
+        let markup_percent = Self::llm_markup_percent(is_zero_pro_user);
         LlmPricing {
-            input_credits_per_million:
-                (pricing.input_credits_per_million * (100 + markup_percent) + 50) / 100,
-            output_credits_per_million:
-                (pricing.output_credits_per_million * (100 + markup_percent) + 50) / 100,
+            input_credits_per_million: (pricing.input_credits_per_million * (100 + markup_percent)
+                + 50)
+                / 100,
+            output_credits_per_million: (pricing.output_credits_per_million
+                * (100 + markup_percent)
+                + 50)
+                / 100,
         }
     }
 
@@ -296,22 +300,22 @@ impl PricingConfig {
         }
     }
 
-    /// Calculate the cost in cents for LLM token usage after applying the plan markup.
+    /// Calculate the cost in cents for LLM token usage after applying the ZERO Pro markup.
     #[must_use]
-    pub fn calculate_llm_cost_for_plan(
+    pub fn calculate_llm_cost_for_zero_pro_user(
         &self,
         provider: &str,
         model: &str,
         input_tokens: u64,
         output_tokens: u64,
-        plan: &Plan,
+        is_zero_pro_user: bool,
     ) -> i64 {
         let key = ModelKey::new(provider, model);
         let pricing = self
             .llm_pricing
             .get(&key)
             .unwrap_or(&self.default_llm_pricing);
-        let marked_up_pricing = self.marked_up_llm_pricing(pricing, plan);
+        let marked_up_pricing = self.marked_up_llm_pricing(pricing, is_zero_pro_user);
 
         let input_cost = (i64::try_from(input_tokens).unwrap_or(i64::MAX)
             * marked_up_pricing.input_credits_per_million)
@@ -328,33 +332,65 @@ impl PricingConfig {
         }
     }
 
+    /// Legacy billing-plan wrapper. Billing plans no longer affect LLM markup;
+    /// prefer `calculate_llm_cost_for_zero_pro_user` for usage billing.
+    #[must_use]
+    pub fn calculate_llm_cost_for_plan(
+        &self,
+        provider: &str,
+        model: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        _plan: &Plan,
+    ) -> i64 {
+        self.calculate_llm_cost_for_zero_pro_user(
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            false,
+        )
+    }
+
     /// Calculate the minimum balance reserve in cents for starting a short text turn.
     ///
     /// The reserve assumes a short turn of roughly 2k input + 1k output tokens.
     #[must_use]
     pub fn minimum_llm_reserve_cents(&self, provider: &str, model: &str) -> i64 {
-        self.minimum_llm_reserve_cents_for_plan(provider, model, &Plan::Free)
+        self.minimum_llm_reserve_cents_for_zero_pro_user(provider, model, false)
     }
 
     /// Calculate the minimum balance reserve in cents for starting a short text turn,
-    /// taking the user's plan markup into account.
+    /// taking the user's ZERO Pro markup into account.
     #[must_use]
-    pub fn minimum_llm_reserve_cents_for_plan(
+    pub fn minimum_llm_reserve_cents_for_zero_pro_user(
         &self,
         provider: &str,
         model: &str,
-        plan: &Plan,
+        is_zero_pro_user: bool,
     ) -> i64 {
         let key = ModelKey::new(provider, model);
         let pricing = self
             .llm_pricing
             .get(&key)
             .unwrap_or(&self.default_llm_pricing);
-        let marked_up_pricing = self.marked_up_llm_pricing(pricing, plan);
+        let marked_up_pricing = self.marked_up_llm_pricing(pricing, is_zero_pro_user);
 
         let reserve_numerator = 2_000_i64 * marked_up_pricing.input_credits_per_million
             + 1_000_i64 * marked_up_pricing.output_credits_per_million;
         ((reserve_numerator + 999_999) / 1_000_000).max(1)
+    }
+
+    /// Legacy billing-plan wrapper. Billing plans no longer affect LLM markup;
+    /// prefer `minimum_llm_reserve_cents_for_zero_pro_user` for usage billing.
+    #[must_use]
+    pub fn minimum_llm_reserve_cents_for_plan(
+        &self,
+        provider: &str,
+        model: &str,
+        _plan: &Plan,
+    ) -> i64 {
+        self.minimum_llm_reserve_cents_for_zero_pro_user(provider, model, false)
     }
 
     /// Calculate the cost in cents for compute usage.
@@ -469,7 +505,45 @@ mod tests {
     }
 
     #[test]
-    fn calculate_llm_cost_applies_plan_markup() {
+    fn calculate_llm_cost_applies_zero_pro_markup() {
+        let config = PricingConfig::default();
+
+        let non_zero_pro_cost = config.calculate_llm_cost_for_zero_pro_user(
+            "anthropic",
+            "claude-sonnet-4-6",
+            10_000,
+            5_000,
+            false,
+        );
+        let zero_pro_cost = config.calculate_llm_cost_for_zero_pro_user(
+            "anthropic",
+            "claude-sonnet-4-6",
+            10_000,
+            5_000,
+            true,
+        );
+
+        assert_eq!(non_zero_pro_cost, 12);
+        assert_eq!(zero_pro_cost, 11);
+    }
+
+    #[test]
+    fn calculate_llm_cost_for_zero_pro_matches_small_usage_rounding_behavior() {
+        let config = PricingConfig::default();
+
+        let non_zero_pro_cost = config.calculate_llm_cost_for_zero_pro_user(
+            "anthropic",
+            "claude-sonnet-4-6",
+            2_000,
+            2_000,
+            false,
+        );
+
+        assert_eq!(non_zero_pro_cost, 3);
+    }
+
+    #[test]
+    fn calculate_llm_cost_for_plan_ignores_billing_plan() {
         let config = PricingConfig::default();
 
         let free_cost = config.calculate_llm_cost_for_plan(
@@ -479,7 +553,7 @@ mod tests {
             5_000,
             &Plan::Free,
         );
-        let pro_cost = config.calculate_llm_cost_for_plan(
+        let pro_plan_cost = config.calculate_llm_cost_for_plan(
             "anthropic",
             "claude-sonnet-4-6",
             10_000,
@@ -488,22 +562,7 @@ mod tests {
         );
 
         assert_eq!(free_cost, 12);
-        assert_eq!(pro_cost, 11);
-    }
-
-    #[test]
-    fn calculate_llm_cost_for_plan_matches_small_usage_rounding_behavior() {
-        let config = PricingConfig::default();
-
-        let free_cost = config.calculate_llm_cost_for_plan(
-            "anthropic",
-            "claude-sonnet-4-6",
-            2_000,
-            2_000,
-            &Plan::Free,
-        );
-
-        assert_eq!(free_cost, 3);
+        assert_eq!(pro_plan_cost, 12);
     }
 
     #[test]
@@ -543,24 +602,46 @@ mod tests {
     }
 
     #[test]
-    fn minimum_llm_reserve_cents_for_plan_uses_lower_pro_markup() {
+    fn minimum_llm_reserve_cents_for_zero_pro_uses_lower_markup() {
+        let config = PricingConfig::default();
+
+        assert_eq!(
+            config.minimum_llm_reserve_cents_for_zero_pro_user(
+                "anthropic",
+                "aura-claude-opus-4-7",
+                false,
+            ),
+            5
+        );
+        assert_eq!(
+            config.minimum_llm_reserve_cents_for_zero_pro_user(
+                "anthropic",
+                "aura-claude-opus-4-7",
+                true,
+            ),
+            4
+        );
+    }
+
+    #[test]
+    fn minimum_llm_reserve_cents_for_plan_ignores_billing_plan() {
         let config = PricingConfig::default();
 
         assert_eq!(
             config.minimum_llm_reserve_cents_for_plan(
                 "anthropic",
-                "claude-sonnet-4-6",
+                "aura-claude-opus-4-7",
                 &Plan::Free,
             ),
-            3
+            5
         );
         assert_eq!(
             config.minimum_llm_reserve_cents_for_plan(
                 "anthropic",
-                "claude-sonnet-4-6",
+                "aura-claude-opus-4-7",
                 &Plan::Pro,
             ),
-            2
+            5
         );
     }
 

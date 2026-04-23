@@ -8,8 +8,8 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use z_billing_core::{
-    Account, AgentId, CreditTransaction, LlmProvider, Plan, TokenDirection, UsageEvent,
-    UsageMetric, UsageSource, UserId,
+    Account, AgentId, CreditTransaction, LlmProvider, TokenDirection, UsageEvent, UsageMetric,
+    UsageSource, UserId,
 };
 use z_billing_store::Store;
 
@@ -64,6 +64,15 @@ pub struct UsageRequest {
     pub metric: UsageMetricRequest,
     /// Pre-calculated cost in cents (optional, will be calculated if not provided).
     pub cost_cents: Option<i64>,
+    /// Whether the user has a ZERO Pro entitlement. This is separate from
+    /// z-billing subscription plans and controls LLM markup.
+    #[serde(
+        default,
+        alias = "zeroProUser",
+        alias = "is_zero_pro",
+        alias = "isZeroPro"
+    )]
+    pub zero_pro_user: Option<bool>,
     /// Additional metadata.
     #[serde(default)]
     pub metadata: serde_json::Value,
@@ -139,13 +148,14 @@ pub async fn report_usage(
         .transpose()
         .map_err(|_| ApiError::BadRequest("Invalid agent ID".into()))?;
 
-    // Get or create account before cost calculation so billing can reflect the user's plan.
+    // Get or create account before processing usage so balance/account state exists.
     let account = get_or_create_account(state.store.as_ref(), &user_id)?;
+    let zero_pro_user = usage_zero_pro_user(&body);
 
     // Calculate cost if not provided
     let cost_cents = body
         .cost_cents
-        .unwrap_or_else(|| calculate_cost(&state.config.pricing, &account.current_plan(), &body.metric));
+        .unwrap_or_else(|| calculate_cost(&state.config.pricing, zero_pro_user, &body.metric));
 
     if cost_cents < 0 {
         return Err(ApiError::BadRequest(
@@ -300,6 +310,14 @@ pub struct CheckBalanceRequest {
     pub user_id: String,
     /// Required amount in cents.
     pub required_cents: i64,
+    /// Whether the user has a ZERO Pro entitlement for model-aware reserve calculation.
+    #[serde(
+        default,
+        alias = "zeroProUser",
+        alias = "is_zero_pro",
+        alias = "isZeroPro"
+    )]
+    pub zero_pro_user: Option<bool>,
     /// Optional provider name for model-aware reserve calculation.
     pub provider: Option<String>,
     /// Optional model name for model-aware reserve calculation.
@@ -319,12 +337,12 @@ pub struct CheckBalanceResponse {
 
 fn effective_required_cents(
     pricing: &z_billing_core::PricingConfig,
-    plan: &Plan,
+    zero_pro_user: bool,
     request: &CheckBalanceRequest,
 ) -> i64 {
     match (request.provider.as_deref(), request.model.as_deref()) {
         (Some(provider), Some(model)) if request.required_cents <= 0 => {
-            pricing.minimum_llm_reserve_cents_for_plan(provider, model, plan)
+            pricing.minimum_llm_reserve_cents_for_zero_pro_user(provider, model, zero_pro_user)
         }
         _ => request.required_cents,
     }
@@ -342,8 +360,11 @@ pub async fn check_balance(
         .map_err(|_| ApiError::BadRequest("Invalid user ID".into()))?;
 
     let account = get_or_create_account(state.store.as_ref(), &user_id)?;
-    let required_cents =
-        effective_required_cents(&state.config.pricing, &account.current_plan(), &body);
+    let required_cents = effective_required_cents(
+        &state.config.pricing,
+        body.zero_pro_user.unwrap_or(false),
+        &body,
+    );
 
     Ok(Json(CheckBalanceResponse {
         sufficient: account.balance_cents >= required_cents,
@@ -354,8 +375,6 @@ pub async fn check_balance(
 
 #[cfg(test)]
 mod tests {
-    use z_billing_core::Plan;
-
     use super::{effective_required_cents, CheckBalanceRequest};
 
     #[test]
@@ -364,24 +383,26 @@ mod tests {
         let request = CheckBalanceRequest {
             user_id: "user-1".to_string(),
             required_cents: 0,
+            zero_pro_user: None,
             provider: Some("openai".to_string()),
             model: Some("aura-gpt-5-4".to_string()),
         };
 
-        assert_eq!(effective_required_cents(&pricing, &Plan::Free, &request), 3);
+        assert_eq!(effective_required_cents(&pricing, false, &request), 3);
     }
 
     #[test]
-    fn effective_required_cents_uses_lower_pro_reserve() {
+    fn effective_required_cents_uses_lower_zero_pro_reserve() {
         let pricing = z_billing_core::PricingConfig::default();
         let request = CheckBalanceRequest {
             user_id: "user-1".to_string(),
             required_cents: 0,
-            provider: Some("openai".to_string()),
-            model: Some("aura-gpt-5-4".to_string()),
+            zero_pro_user: Some(true),
+            provider: Some("anthropic".to_string()),
+            model: Some("aura-claude-opus-4-7".to_string()),
         };
 
-        assert_eq!(effective_required_cents(&pricing, &Plan::Pro, &request), 2);
+        assert_eq!(effective_required_cents(&pricing, true, &request), 4);
     }
 
     #[test]
@@ -390,11 +411,12 @@ mod tests {
         let request = CheckBalanceRequest {
             user_id: "user-1".to_string(),
             required_cents: 50,
+            zero_pro_user: None,
             provider: Some("openai".to_string()),
             model: Some("aura-gpt-5-4".to_string()),
         };
 
-        assert_eq!(effective_required_cents(&pricing, &Plan::Free, &request), 50);
+        assert_eq!(effective_required_cents(&pricing, false, &request), 50);
     }
 }
 
@@ -485,6 +507,7 @@ async fn process_single_usage(
 
     let agent_id = body
         .agent_id
+        .clone()
         .map(|id| id.parse::<AgentId>())
         .transpose()
         .map_err(|_| ApiError::BadRequest("Invalid agent ID".into()))?;
@@ -493,10 +516,11 @@ async fn process_single_usage(
         .store
         .get_account(&user_id)?
         .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
+    let zero_pro_user = usage_zero_pro_user(&body);
 
     let cost_cents = body
         .cost_cents
-        .unwrap_or_else(|| calculate_cost(&state.config.pricing, &account.current_plan(), &body.metric));
+        .unwrap_or_else(|| calculate_cost(&state.config.pricing, zero_pro_user, &body.metric));
 
     if cost_cents < 0 {
         return Err(ApiError::BadRequest(
@@ -528,7 +552,7 @@ async fn process_single_usage(
 
 fn calculate_cost(
     pricing: &z_billing_core::PricingConfig,
-    plan: &Plan,
+    zero_pro_user: bool,
     metric: &UsageMetricRequest,
 ) -> i64 {
     match metric {
@@ -537,12 +561,12 @@ fn calculate_cost(
             model,
             input_tokens,
             output_tokens,
-        } => pricing.calculate_llm_cost_for_plan(
+        } => pricing.calculate_llm_cost_for_zero_pro_user(
             provider,
             model,
             *input_tokens,
             *output_tokens,
-            plan,
+            zero_pro_user,
         ),
         UsageMetricRequest::Compute {
             cpu_hours,
@@ -554,6 +578,22 @@ fn calculate_cost(
             std::cmp::max(1, (*count as i64) / (API_CALLS_PER_CREDIT as i64))
         }
     }
+}
+
+fn usage_zero_pro_user(req: &UsageRequest) -> bool {
+    req.zero_pro_user
+        .or_else(|| metadata_bool(&req.metadata, "zero_pro_user"))
+        .or_else(|| metadata_bool(&req.metadata, "zeroProUser"))
+        .or_else(|| metadata_bool(&req.metadata, "is_zero_pro"))
+        .or_else(|| metadata_bool(&req.metadata, "isZeroPro"))
+        .unwrap_or(false)
+}
+
+fn metadata_bool(metadata: &serde_json::Value, key: &str) -> Option<bool> {
+    metadata
+        .as_object()
+        .and_then(|object| object.get(key))
+        .and_then(serde_json::Value::as_bool)
 }
 
 #[allow(clippy::cast_precision_loss)]
