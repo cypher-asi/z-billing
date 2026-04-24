@@ -85,6 +85,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/credits/add", post(credits::admin_add_credits))
         .route("/credits/signup-grant", post(credits::signup_grant))
         .route("/credits/daily-grant", post(credits::daily_grant))
+        .route("/credits/referral-grant", post(credits::referral_grant))
         // Payments (Stripe history)
         .route("/payments", get(credits::list_payments))
         // Usage routes (with their own concurrency limit)

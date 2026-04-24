@@ -686,6 +686,165 @@ pub async fn daily_grant(
     }
 }
 
+// ============================================================================
+// Referral Grant
+// ============================================================================
+
+/// Default referral grant amount if env var is not set (5000 credits = $50).
+fn referral_grant_amount() -> i64 {
+    std::env::var("REFERRAL_GRANT_CREDITS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5000)
+}
+
+/// Bonus for Pro inviters (7500 credits = $75).
+fn referral_grant_amount_pro_inviter() -> i64 {
+    std::env::var("REFERRAL_GRANT_PRO_INVITER_CREDITS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7500)
+}
+
+/// Request body for the referral grant endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ReferralGrantRequest {
+    /// The user ID of the person who shared the invite code.
+    pub inviter_user_id: String,
+    /// The user ID of the new user who signed up with the code.
+    pub invitee_user_id: String,
+}
+
+/// Grant referral credits to both inviter and invitee.
+///
+/// Idempotent: if this invitee has already received a referral bonus,
+/// returns `granted: false`. Both grants happen in sequence — invitee
+/// is checked first to prevent duplicate grants.
+///
+/// The inviter gets a higher bonus if they are on a Pro plan ($75 vs $50),
+/// incentivising Pro subscription.
+///
+/// Requires service-to-service auth via `X-API-Key` header.
+pub async fn referral_grant(
+    State(state): State<Arc<AppState>>,
+    _auth: crate::auth::ServiceAuth,
+    Json(body): Json<ReferralGrantRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let inviter_id: z_billing_core::UserId = body
+        .inviter_user_id
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid inviter user ID".into()))?;
+    let invitee_id: z_billing_core::UserId = body
+        .invitee_user_id
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid invitee user ID".into()))?;
+
+    if inviter_id == invitee_id {
+        return Err(ApiError::BadRequest("Inviter and invitee cannot be the same user".into()));
+    }
+
+    // Get or create invitee account
+    let invitee_account = match state.store.get_account(&invitee_id)? {
+        Some(a) => a,
+        None => {
+            let new_account = z_billing_core::Account::new(invitee_id);
+            state.store.put_account(&new_account)?;
+            new_account
+        }
+    };
+
+    // Check if invitee already received a referral bonus by checking transactions
+    let invitee_txs = state.store.list_transactions_by_user(&invitee_id, 100, 0)?;
+    let already_granted = invitee_txs
+        .iter()
+        .any(|t| t.transaction_type == z_billing_core::TransactionType::ReferralBonus);
+
+    if already_granted {
+        return Ok(Json(serde_json::json!({
+            "granted": false,
+            "reason": "already_granted",
+        })));
+    }
+
+    let invitee_amount = referral_grant_amount();
+
+    // Grant to invitee
+    let invitee_new_balance = invitee_account.balance_cents + invitee_amount;
+    let invitee_tx = CreditTransaction::referral_bonus(
+        invitee_id,
+        invitee_amount,
+        invitee_new_balance,
+        format!("Referral bonus — invited by {}", body.inviter_user_id),
+    );
+    let invitee_balance = state.store.add_credits(&invitee_id, invitee_amount, &invitee_tx)?;
+
+    // Broadcast invitee balance update
+    #[allow(clippy::cast_precision_loss)]
+    let _ = state.balance_tx.send(
+        serde_json::json!({
+            "type": "balance.updated",
+            "userId": invitee_id.to_string(),
+            "balanceCents": invitee_balance,
+            "balanceFormatted": format!("${:.2}", invitee_balance as f64 / 100.0),
+        })
+        .to_string(),
+    );
+
+    // Get or create inviter account and determine bonus amount
+    let inviter_account = match state.store.get_account(&inviter_id)? {
+        Some(a) => a,
+        None => {
+            let new_account = z_billing_core::Account::new(inviter_id);
+            state.store.put_account(&new_account)?;
+            new_account
+        }
+    };
+
+    let inviter_amount = if inviter_account.current_plan() == z_billing_core::Plan::Pro {
+        referral_grant_amount_pro_inviter()
+    } else {
+        referral_grant_amount()
+    };
+
+    // Grant to inviter
+    let inviter_new_balance = inviter_account.balance_cents + inviter_amount;
+    let inviter_tx = CreditTransaction::referral_bonus(
+        inviter_id,
+        inviter_amount,
+        inviter_new_balance,
+        format!("Referral bonus — {} signed up with your invite", body.invitee_user_id),
+    );
+    let inviter_balance = state.store.add_credits(&inviter_id, inviter_amount, &inviter_tx)?;
+
+    // Broadcast inviter balance update
+    #[allow(clippy::cast_precision_loss)]
+    let _ = state.balance_tx.send(
+        serde_json::json!({
+            "type": "balance.updated",
+            "userId": inviter_id.to_string(),
+            "balanceCents": inviter_balance,
+            "balanceFormatted": format!("${:.2}", inviter_balance as f64 / 100.0),
+        })
+        .to_string(),
+    );
+
+    tracing::info!(
+        inviter_id = %inviter_id,
+        invitee_id = %invitee_id,
+        invitee_amount = %invitee_amount,
+        inviter_amount = %inviter_amount,
+        "Referral credit grant issued to both parties"
+    );
+
+    Ok(Json(serde_json::json!({
+        "granted": true,
+        "invitee_amount_cents": invitee_amount,
+        "inviter_amount_cents": inviter_amount,
+        "invitee_balance_cents": invitee_balance,
+        "inviter_balance_cents": inviter_balance,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,5 +898,31 @@ mod tests {
         std::env::set_var("DAILY_GRANT_FREE", "not_a_number");
         assert_eq!(daily_grant_amount(&Plan::Free), 200);
         std::env::remove_var("DAILY_GRANT_FREE");
+    }
+
+    #[test]
+    fn referral_grant_amount_defaults_to_5000() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("REFERRAL_GRANT_CREDITS");
+        assert_eq!(referral_grant_amount(), 5000);
+    }
+
+    #[test]
+    fn referral_grant_amount_pro_inviter_defaults_to_7500() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("REFERRAL_GRANT_PRO_INVITER_CREDITS");
+        assert_eq!(referral_grant_amount_pro_inviter(), 7500);
+    }
+
+    #[test]
+    fn referral_grant_amounts_read_env_vars() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("REFERRAL_GRANT_CREDITS", "3000");
+        assert_eq!(referral_grant_amount(), 3000);
+        std::env::remove_var("REFERRAL_GRANT_CREDITS");
+
+        std::env::set_var("REFERRAL_GRANT_PRO_INVITER_CREDITS", "10000");
+        assert_eq!(referral_grant_amount_pro_inviter(), 10000);
+        std::env::remove_var("REFERRAL_GRANT_PRO_INVITER_CREDITS");
     }
 }
