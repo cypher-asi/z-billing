@@ -124,10 +124,6 @@ impl Default for PricingConfig {
             input_credits_per_million: 250,
             output_credits_per_million: 1500,
         };
-        let gpt_5_5_pricing = LlmPricing {
-            input_credits_per_million: 500,
-            output_credits_per_million: 3000,
-        };
         let gpt_5_4_mini_pricing = LlmPricing {
             input_credits_per_million: 75,
             output_credits_per_million: 450,
@@ -137,7 +133,6 @@ impl Default for PricingConfig {
             output_credits_per_million: 125,
         };
         llm_pricing.insert(ModelKey::new("openai", "gpt-5.4"), gpt_5_4_pricing.clone());
-        llm_pricing.insert(ModelKey::new("openai", "gpt-5.5"), gpt_5_5_pricing.clone());
         llm_pricing.insert(
             ModelKey::new("openai", "gpt-5.4-mini"),
             gpt_5_4_mini_pricing.clone(),
@@ -147,7 +142,6 @@ impl Default for PricingConfig {
             gpt_5_4_nano_pricing.clone(),
         );
         llm_pricing.insert(ModelKey::new("openai", "aura-gpt-5-4"), gpt_5_4_pricing);
-        llm_pricing.insert(ModelKey::new("openai", "aura-gpt-5-5"), gpt_5_5_pricing);
         llm_pricing.insert(
             ModelKey::new("openai", "aura-gpt-5-4-mini"),
             gpt_5_4_mini_pricing,
@@ -171,6 +165,49 @@ impl Default for PricingConfig {
                 input_credits_per_million: 30,
                 output_credits_per_million: 250,
             },
+        );
+
+        // DeepSeek direct API models at cache-miss/base input rates. Callers can
+        // send cost_cents when DeepSeek returns cache hit/miss token details.
+        let deepseek_v4_pro_pricing = LlmPricing {
+            input_credits_per_million: 174,
+            output_credits_per_million: 348,
+        };
+        let deepseek_v4_flash_pricing = LlmPricing {
+            input_credits_per_million: 14,
+            output_credits_per_million: 28,
+        };
+        llm_pricing.insert(
+            ModelKey::new("deepseek", "aura-deepseek-v4-pro"),
+            deepseek_v4_pro_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("deepseek", "deepseek-v4-pro"),
+            deepseek_v4_pro_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("deepseek", "deepseek/deepseek-v4-pro"),
+            deepseek_v4_pro_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("deepseek", "aura-deepseek-v4-flash"),
+            deepseek_v4_flash_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("deepseek", "deepseek-v4-flash"),
+            deepseek_v4_flash_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("deepseek", "deepseek/deepseek-v4-flash"),
+            deepseek_v4_flash_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("deepseek", "deepseek-chat"),
+            deepseek_v4_flash_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("deepseek", "deepseek-reasoner"),
+            deepseek_v4_flash_pricing,
         );
 
         // Fireworks-hosted open-weight models at vendor/base rates.
@@ -504,7 +541,10 @@ mod tests {
             .contains_key(&ModelKey::new("openai", "aura-gpt-5-4")));
         assert!(config
             .llm_pricing
-            .contains_key(&ModelKey::new("openai", "aura-gpt-5-5")));
+            .contains_key(&ModelKey::new("deepseek", "aura-deepseek-v4-pro")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("deepseek", "deepseek-v4-flash")));
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("fireworks", "aura-kimi-k2-6")));
@@ -547,14 +587,19 @@ mod tests {
     }
 
     #[test]
-    fn calculate_llm_cost_gpt_5_5() {
+    fn calculate_llm_cost_deepseek_v4() {
         let config = PricingConfig::default();
 
-        // GPT-5.5: 500 credits/1M input, 3000 credits/1M output
-        // 10,000 input tokens = 5 credits
-        // 5,000 output tokens = 15 credits
-        let cost = config.calculate_llm_cost("openai", "aura-gpt-5-5", 10_000, 5_000);
-        assert_eq!(cost, 20);
+        let pro_cost =
+            config.calculate_llm_cost("deepseek", "aura-deepseek-v4-pro", 1_000_000, 500_000);
+        let flash_cost =
+            config.calculate_llm_cost("deepseek", "deepseek/deepseek-v4-flash", 1_000_000, 500_000);
+        let legacy_chat_cost =
+            config.calculate_llm_cost("deepseek", "deepseek-chat", 1_000_000, 500_000);
+
+        assert_eq!(pro_cost, 348);
+        assert_eq!(flash_cost, 28);
+        assert_eq!(legacy_chat_cost, flash_cost);
     }
 
     #[test]
