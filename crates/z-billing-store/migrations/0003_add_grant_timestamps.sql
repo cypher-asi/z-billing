@@ -1,5 +1,5 @@
--- Add timestamp columns for tracking one-time signup grant and daily credit grants.
--- These enable idempotent grant operations without scanning transaction history.
+-- Add columns for credit grant tracking and ZERO Pro status.
 
+ALTER TABLE accounts ADD COLUMN is_zero_pro BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE accounts ADD COLUMN signup_grant_at TIMESTAMPTZ;
 ALTER TABLE accounts ADD COLUMN last_daily_grant_at TIMESTAMPTZ;

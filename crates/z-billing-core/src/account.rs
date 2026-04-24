@@ -69,6 +69,11 @@ pub struct Account {
     /// Stripe customer ID for payments.
     pub stripe_customer_id: Option<String>,
 
+    /// Whether this user has a ZERO Pro subscription (ecosystem membership).
+    /// Set during signup grant, used for daily credit boost.
+    #[serde(default)]
+    pub is_zero_pro: bool,
+
     /// When the one-time signup credit grant was issued (None = not yet granted).
     pub signup_grant_at: Option<DateTime<Utc>>,
 
@@ -97,6 +102,7 @@ impl Account {
             auto_refill: None,
             lago_customer_id: None,
             stripe_customer_id: None,
+            is_zero_pro: false,
             signup_grant_at: None,
             last_daily_grant_at: None,
             created_at: now,

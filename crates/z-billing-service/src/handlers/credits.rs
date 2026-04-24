@@ -480,6 +480,9 @@ fn signup_grant_amount() -> i64 {
 pub struct SignupGrantRequest {
     /// The user ID to grant signup credits to.
     pub user_id: String,
+    /// Whether this user has a ZERO Pro subscription.
+    #[serde(default)]
+    pub is_zero_pro: bool,
 }
 
 /// Grant one-time signup credits to a new user.
@@ -526,9 +529,10 @@ pub async fn signup_grant(
 
     let balance = state.store.add_credits(&user_id, amount, &tx)?;
 
-    // Mark signup grant as issued
+    // Mark signup grant as issued and store Zero Pro status
     let mut updated = state.store.get_account(&user_id)?.unwrap_or(account);
     updated.signup_grant_at = Some(chrono::Utc::now());
+    updated.is_zero_pro = body.is_zero_pro;
     updated.updated_at = chrono::Utc::now();
     state.store.put_account(&updated)?;
 
@@ -562,24 +566,35 @@ pub async fn signup_grant(
 // Daily Grant
 // ============================================================================
 
-/// Daily grant amount for a plan. Configurable via env vars.
-fn daily_grant_amount(plan: &z_billing_core::Plan) -> i64 {
-    let env_key = match plan {
+/// Daily grant amount based on plan and Zero Pro status.
+/// Zero Pro users get a boost on top of their plan amount.
+fn daily_grant_amount(plan: &z_billing_core::Plan, is_zero_pro: bool) -> i64 {
+    let base_env_key = match plan {
         z_billing_core::Plan::Free => "DAILY_GRANT_FREE",
         z_billing_core::Plan::Standard => "DAILY_GRANT_STANDARD",
         z_billing_core::Plan::Pro => "DAILY_GRANT_PRO",
         z_billing_core::Plan::Enterprise => "DAILY_GRANT_ENTERPRISE",
     };
-    let default = match plan {
+    let base_default = match plan {
         z_billing_core::Plan::Free => 200,        // $2.00
         z_billing_core::Plan::Standard => 400,    // $4.00
         z_billing_core::Plan::Pro => 600,         // $6.00
         z_billing_core::Plan::Enterprise => 1000, // $10.00
     };
-    std::env::var(env_key)
+    let base = std::env::var(base_env_key)
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+        .unwrap_or(base_default);
+
+    if is_zero_pro {
+        let boost = std::env::var("DAILY_GRANT_ZERO_PRO_BOOST")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(200); // Extra $2.00/day for Zero Pro members
+        base + boost
+    } else {
+        base
+    }
 }
 
 /// Check if the account is eligible for a daily grant and issue it if so.
@@ -606,7 +621,7 @@ pub fn try_daily_grant(
     }
 
     let plan = account.current_plan();
-    let amount = daily_grant_amount(&plan);
+    let amount = daily_grant_amount(&plan, account.is_zero_pro);
     if amount <= 0 {
         return Ok(None);
     }
@@ -675,7 +690,7 @@ pub async fn daily_grant(
     match try_daily_grant(state.store.as_ref(), &state.balance_tx, &account)? {
         Some(balance) => Ok(Json(serde_json::json!({
             "granted": true,
-            "amount_cents": daily_grant_amount(&account.current_plan()),
+            "amount_cents": daily_grant_amount(&account.current_plan(), account.is_zero_pro),
             "balance_cents": balance,
         }))),
         None => Ok(Json(serde_json::json!({
@@ -876,27 +891,42 @@ mod tests {
         std::env::remove_var("DAILY_GRANT_STANDARD");
         std::env::remove_var("DAILY_GRANT_PRO");
         std::env::remove_var("DAILY_GRANT_ENTERPRISE");
+        std::env::remove_var("DAILY_GRANT_ZERO_PRO_BOOST");
 
-        assert_eq!(daily_grant_amount(&Plan::Free), 200);
-        assert_eq!(daily_grant_amount(&Plan::Standard), 400);
-        assert_eq!(daily_grant_amount(&Plan::Pro), 600);
-        assert_eq!(daily_grant_amount(&Plan::Enterprise), 1000);
+        assert_eq!(daily_grant_amount(&Plan::Free, false), 200);
+        assert_eq!(daily_grant_amount(&Plan::Standard, false), 400);
+        assert_eq!(daily_grant_amount(&Plan::Pro, false), 600);
+        assert_eq!(daily_grant_amount(&Plan::Enterprise, false), 1000);
+    }
+
+    #[test]
+    fn daily_grant_amount_zero_pro_boost() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("DAILY_GRANT_FREE");
+        std::env::remove_var("DAILY_GRANT_ZERO_PRO_BOOST");
+
+        // Non-Pro Free user gets 200
+        assert_eq!(daily_grant_amount(&Plan::Free, false), 200);
+        // Zero Pro Free user gets 200 + 200 boost = 400
+        assert_eq!(daily_grant_amount(&Plan::Free, true), 400);
     }
 
     #[test]
     fn daily_grant_amount_reads_env_vars() {
         let _lock = ENV_LOCK.lock().unwrap();
         std::env::remove_var("DAILY_GRANT_FREE");
+        std::env::remove_var("DAILY_GRANT_ZERO_PRO_BOOST");
         std::env::set_var("DAILY_GRANT_FREE", "300");
-        assert_eq!(daily_grant_amount(&Plan::Free), 300);
+        assert_eq!(daily_grant_amount(&Plan::Free, false), 300);
         std::env::remove_var("DAILY_GRANT_FREE");
     }
 
     #[test]
     fn daily_grant_amount_ignores_invalid_env_var() {
         let _lock = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("DAILY_GRANT_ZERO_PRO_BOOST");
         std::env::set_var("DAILY_GRANT_FREE", "not_a_number");
-        assert_eq!(daily_grant_amount(&Plan::Free), 200);
+        assert_eq!(daily_grant_amount(&Plan::Free, false), 200);
         std::env::remove_var("DAILY_GRANT_FREE");
     }
 
