@@ -349,6 +349,9 @@ fn effective_required_cents(
 }
 
 /// Check if a user has sufficient balance.
+///
+/// Also triggers a lazy daily credit grant if the user hasn't received
+/// one today — credits appear on first use of the day.
 pub async fn check_balance(
     State(state): State<Arc<AppState>>,
     _auth: ServiceAuth,
@@ -359,7 +362,15 @@ pub async fn check_balance(
         .parse()
         .map_err(|_| ApiError::BadRequest("Invalid user ID".into()))?;
 
-    let account = get_or_create_account(state.store.as_ref(), &user_id)?;
+    let mut account = get_or_create_account(state.store.as_ref(), &user_id)?;
+
+    // Lazy daily grant: if not yet granted today, issue daily credits
+    if let Some(new_balance) =
+        super::credits::try_daily_grant(state.store.as_ref(), &state.balance_tx, &account)?
+    {
+        account.balance_cents = new_balance;
+    }
+
     let required_cents = effective_required_cents(
         &state.config.pricing,
         body.zero_pro_user.unwrap_or(false),

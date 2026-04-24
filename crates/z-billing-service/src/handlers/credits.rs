@@ -50,13 +50,21 @@ pub async fn get_balance(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<BalanceResponse>, ApiError> {
-    let account = state
+    let mut account = state
         .store
         .get_account(&auth.user_id)?
         .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
 
+    // Lazy daily grant: if not yet granted today, issue daily credits
+    if let Some(new_balance) =
+        try_daily_grant(state.store.as_ref(), &state.balance_tx, &account)?
+    {
+        account.balance_cents = new_balance;
+    }
+
     Ok(Json(BalanceResponse {
         balance_cents: account.balance_cents,
+        #[allow(clippy::cast_precision_loss)]
         balance_formatted: format!("${:.2}", account.balance_cents as f64 / 100.0),
         plan: format!("{:?}", account.current_plan()).to_lowercase(),
     }))
@@ -467,8 +475,10 @@ fn signup_grant_amount() -> i64 {
         .unwrap_or(5000)
 }
 
+/// Request body for the signup grant endpoint.
 #[derive(Debug, Deserialize)]
 pub struct SignupGrantRequest {
+    /// The user ID to grant signup credits to.
     pub user_id: String,
 }
 
@@ -546,4 +556,188 @@ pub async fn signup_grant(
         "amount_cents": amount,
         "balance_cents": balance,
     })))
+}
+
+// ============================================================================
+// Daily Grant
+// ============================================================================
+
+/// Daily grant amount for a plan. Configurable via env vars.
+fn daily_grant_amount(plan: &z_billing_core::Plan) -> i64 {
+    let env_key = match plan {
+        z_billing_core::Plan::Free => "DAILY_GRANT_FREE",
+        z_billing_core::Plan::Standard => "DAILY_GRANT_STANDARD",
+        z_billing_core::Plan::Pro => "DAILY_GRANT_PRO",
+        z_billing_core::Plan::Enterprise => "DAILY_GRANT_ENTERPRISE",
+    };
+    let default = match plan {
+        z_billing_core::Plan::Free => 200,        // $2.00
+        z_billing_core::Plan::Standard => 400,    // $4.00
+        z_billing_core::Plan::Pro => 600,         // $6.00
+        z_billing_core::Plan::Enterprise => 1000, // $10.00
+    };
+    std::env::var(env_key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Check if the account is eligible for a daily grant and issue it if so.
+///
+/// Returns the new balance if a grant was issued, or None if not eligible.
+/// Uses the lazy approach: credits are granted on first use of the day.
+/// Previous days' unused daily credits are NOT carried over — you only get
+/// today's grant when you show up.
+///
+/// This function is safe to call from multiple code paths — the
+/// `last_daily_grant_at` check prevents double-grants within the same day.
+pub fn try_daily_grant(
+    store: &dyn Store,
+    balance_tx: &tokio::sync::broadcast::Sender<String>,
+    account: &z_billing_core::Account,
+) -> Result<Option<i64>, ApiError> {
+    let today = chrono::Utc::now().date_naive();
+
+    // Check if already granted today
+    if let Some(last_grant) = account.last_daily_grant_at {
+        if last_grant.date_naive() >= today {
+            return Ok(None);
+        }
+    }
+
+    let plan = account.current_plan();
+    let amount = daily_grant_amount(&plan);
+    if amount <= 0 {
+        return Ok(None);
+    }
+
+    let user_id = account.user_id;
+    let new_balance = account.balance_cents + amount;
+    let tx = CreditTransaction::daily_grant(user_id, amount, new_balance);
+
+    let balance = store.add_credits(&user_id, amount, &tx)?;
+
+    // Update last_daily_grant_at
+    let mut updated = store.get_account(&user_id)?.unwrap_or_else(|| account.clone());
+    updated.last_daily_grant_at = Some(chrono::Utc::now());
+    updated.updated_at = chrono::Utc::now();
+    store.put_account(&updated)?;
+
+    // Broadcast balance update
+    #[allow(clippy::cast_precision_loss)]
+    let _ = balance_tx.send(
+        serde_json::json!({
+            "type": "balance.updated",
+            "userId": user_id.to_string(),
+            "balanceCents": balance,
+            "balanceFormatted": format!("${:.2}", balance as f64 / 100.0),
+        })
+        .to_string(),
+    );
+
+    tracing::info!(
+        user_id = %user_id,
+        plan = ?plan,
+        amount_cents = %amount,
+        new_balance = %balance,
+        "Daily credit grant issued"
+    );
+
+    Ok(Some(balance))
+}
+
+/// Request body for the daily grant endpoint.
+#[derive(Debug, Deserialize)]
+pub struct DailyGrantRequest {
+    /// The user ID to grant daily credits to.
+    pub user_id: String,
+}
+
+/// Explicitly trigger a daily grant for a user.
+///
+/// Idempotent — safe to call multiple times per day.
+/// Requires service-to-service auth via `X-API-Key` header.
+pub async fn daily_grant(
+    State(state): State<Arc<AppState>>,
+    _auth: crate::auth::ServiceAuth,
+    Json(body): Json<DailyGrantRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = body
+        .user_id
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid user ID".into()))?;
+
+    let account = state
+        .store
+        .get_account(&user_id)?
+        .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
+
+    match try_daily_grant(state.store.as_ref(), &state.balance_tx, &account)? {
+        Some(balance) => Ok(Json(serde_json::json!({
+            "granted": true,
+            "amount_cents": daily_grant_amount(&account.current_plan()),
+            "balance_cents": balance,
+        }))),
+        None => Ok(Json(serde_json::json!({
+            "granted": false,
+            "reason": "already_granted_today",
+            "balance_cents": account.balance_cents,
+        }))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use z_billing_core::Plan;
+
+    // Env var tests must run sequentially to avoid pollution
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn signup_grant_amount_defaults_to_5000() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("SIGNUP_GRANT_CREDITS");
+        assert_eq!(signup_grant_amount(), 5000);
+    }
+
+    #[test]
+    fn signup_grant_amount_reads_env_var() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SIGNUP_GRANT_CREDITS", "10000");
+        assert_eq!(signup_grant_amount(), 10000);
+        std::env::remove_var("SIGNUP_GRANT_CREDITS");
+    }
+
+    #[test]
+    fn daily_grant_amount_defaults() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("DAILY_GRANT_FREE");
+        std::env::remove_var("DAILY_GRANT_STANDARD");
+        std::env::remove_var("DAILY_GRANT_PRO");
+        std::env::remove_var("DAILY_GRANT_ENTERPRISE");
+
+        assert_eq!(daily_grant_amount(&Plan::Free), 200);
+        assert_eq!(daily_grant_amount(&Plan::Standard), 400);
+        assert_eq!(daily_grant_amount(&Plan::Pro), 600);
+        assert_eq!(daily_grant_amount(&Plan::Enterprise), 1000);
+    }
+
+    #[test]
+    fn daily_grant_amount_reads_env_vars() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("DAILY_GRANT_FREE");
+        std::env::set_var("DAILY_GRANT_FREE", "300");
+        assert_eq!(daily_grant_amount(&Plan::Free), 300);
+        std::env::remove_var("DAILY_GRANT_FREE");
+    }
+
+    #[test]
+    fn daily_grant_amount_ignores_invalid_env_var() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("DAILY_GRANT_FREE", "not_a_number");
+        assert_eq!(daily_grant_amount(&Plan::Free), 200);
+        std::env::remove_var("DAILY_GRANT_FREE");
+    }
 }
