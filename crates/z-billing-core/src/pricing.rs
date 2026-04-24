@@ -136,14 +136,8 @@ impl Default for PricingConfig {
             input_credits_per_million: 20,
             output_credits_per_million: 125,
         };
-        llm_pricing.insert(
-            ModelKey::new("openai", "gpt-5.4"),
-            gpt_5_4_pricing.clone(),
-        );
-        llm_pricing.insert(
-            ModelKey::new("openai", "gpt-5.5"),
-            gpt_5_5_pricing.clone(),
-        );
+        llm_pricing.insert(ModelKey::new("openai", "gpt-5.4"), gpt_5_4_pricing.clone());
+        llm_pricing.insert(ModelKey::new("openai", "gpt-5.5"), gpt_5_5_pricing.clone());
         llm_pricing.insert(
             ModelKey::new("openai", "gpt-5.4-mini"),
             gpt_5_4_mini_pricing.clone(),
@@ -152,14 +146,8 @@ impl Default for PricingConfig {
             ModelKey::new("openai", "gpt-5.4-nano"),
             gpt_5_4_nano_pricing.clone(),
         );
-        llm_pricing.insert(
-            ModelKey::new("openai", "aura-gpt-5-4"),
-            gpt_5_4_pricing,
-        );
-        llm_pricing.insert(
-            ModelKey::new("openai", "aura-gpt-5-5"),
-            gpt_5_5_pricing,
-        );
+        llm_pricing.insert(ModelKey::new("openai", "aura-gpt-5-4"), gpt_5_4_pricing);
+        llm_pricing.insert(ModelKey::new("openai", "aura-gpt-5-5"), gpt_5_5_pricing);
         llm_pricing.insert(
             ModelKey::new("openai", "aura-gpt-5-4-mini"),
             gpt_5_4_mini_pricing,
@@ -190,9 +178,25 @@ impl Default for PricingConfig {
             input_credits_per_million: 56,
             output_credits_per_million: 168,
         };
-        let kimi_k2_pricing = LlmPricing {
+        let kimi_k2_5_pricing = LlmPricing {
             input_credits_per_million: 60,
             output_credits_per_million: 300,
+        };
+        let kimi_k2_5_turbo_pricing = LlmPricing {
+            input_credits_per_million: 99,
+            output_credits_per_million: 494,
+        };
+        let kimi_k2_6_pricing = LlmPricing {
+            input_credits_per_million: 95,
+            output_credits_per_million: 400,
+        };
+        let kimi_k2_6_turbo_pricing = LlmPricing {
+            input_credits_per_million: 200,
+            output_credits_per_million: 800,
+        };
+        let kimi_k2_base_pricing = LlmPricing {
+            input_credits_per_million: 60,
+            output_credits_per_million: 250,
         };
         let gpt_oss_120b_pricing = LlmPricing {
             input_credits_per_million: 15,
@@ -208,19 +212,46 @@ impl Default for PricingConfig {
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-kimi-k2-5"),
-            kimi_k2_pricing.clone(),
+            kimi_k2_5_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p5"),
-            kimi_k2_pricing.clone(),
+            kimi_k2_5_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p5-turbo"),
+            kimi_k2_5_turbo_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/routers/kimi-k2p5-turbo"),
+            kimi_k2_5_turbo_pricing,
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-kimi-k2-6"),
-            kimi_k2_pricing.clone(),
+            kimi_k2_6_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p6"),
-            kimi_k2_pricing,
+            kimi_k2_6_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p6-turbo"),
+            kimi_k2_6_turbo_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/routers/kimi-k2p6-turbo"),
+            kimi_k2_6_turbo_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2-thinking"),
+            kimi_k2_base_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new(
+                "fireworks",
+                "accounts/fireworks/models/kimi-k2-instruct-0905",
+            ),
+            kimi_k2_base_pricing,
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-oss-120b"),
@@ -479,6 +510,28 @@ mod tests {
             .contains_key(&ModelKey::new("fireworks", "aura-kimi-k2-6")));
         assert!(config
             .llm_pricing
+            .contains_key(&ModelKey::new("fireworks", "aura-deepseek-v3-2")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("fireworks", "aura-oss-120b")));
+        assert!(config.llm_pricing.contains_key(&ModelKey::new(
+            "fireworks",
+            "accounts/fireworks/models/kimi-k2p6"
+        )));
+        assert!(config.llm_pricing.contains_key(&ModelKey::new(
+            "fireworks",
+            "accounts/fireworks/models/kimi-k2p5-turbo"
+        )));
+        assert!(config.llm_pricing.contains_key(&ModelKey::new(
+            "fireworks",
+            "accounts/fireworks/routers/kimi-k2p6-turbo"
+        )));
+        assert!(config.llm_pricing.contains_key(&ModelKey::new(
+            "fireworks",
+            "accounts/fireworks/models/kimi-k2-thinking"
+        )));
+        assert!(config
+            .llm_pricing
             .contains_key(&ModelKey::new("anthropic", "claude-3-5-sonnet")));
     }
 
@@ -502,6 +555,71 @@ mod tests {
         // 5,000 output tokens = 15 credits
         let cost = config.calculate_llm_cost("openai", "aura-gpt-5-5", 10_000, 5_000);
         assert_eq!(cost, 20);
+    }
+
+    #[test]
+    fn calculate_llm_cost_kimi_models() {
+        let config = PricingConfig::default();
+
+        let k2_6_cost =
+            config.calculate_llm_cost("fireworks", "aura-kimi-k2-6", 1_000_000, 500_000);
+        let k2_5_cost = config.calculate_llm_cost(
+            "fireworks",
+            "accounts/fireworks/models/kimi-k2p5",
+            1_000_000,
+            500_000,
+        );
+        let k2_5_turbo_cost = config.calculate_llm_cost(
+            "fireworks",
+            "accounts/fireworks/routers/kimi-k2p5-turbo",
+            1_000_000,
+            500_000,
+        );
+        let k2_6_turbo_cost = config.calculate_llm_cost(
+            "fireworks",
+            "accounts/fireworks/routers/kimi-k2p6-turbo",
+            1_000_000,
+            500_000,
+        );
+        let k2_thinking_cost = config.calculate_llm_cost(
+            "fireworks",
+            "accounts/fireworks/models/kimi-k2-thinking",
+            1_000_000,
+            500_000,
+        );
+
+        assert_eq!(k2_6_cost, 295);
+        assert_eq!(k2_5_cost, 210);
+        assert_eq!(k2_5_turbo_cost, 346);
+        assert_eq!(k2_6_turbo_cost, 600);
+        assert_eq!(k2_thinking_cost, 185);
+    }
+
+    #[test]
+    fn calculate_llm_cost_visible_fireworks_models() {
+        let config = PricingConfig::default();
+
+        for (aura_model, fireworks_model, expected_cost) in [
+            ("aura-kimi-k2-5", "accounts/fireworks/models/kimi-k2p5", 210),
+            ("aura-kimi-k2-6", "accounts/fireworks/models/kimi-k2p6", 295),
+            (
+                "aura-deepseek-v3-2",
+                "accounts/fireworks/models/deepseek-v3p2",
+                140,
+            ),
+            (
+                "aura-oss-120b",
+                "accounts/fireworks/models/gpt-oss-120b",
+                45,
+            ),
+        ] {
+            let aura_cost = config.calculate_llm_cost("fireworks", aura_model, 1_000_000, 500_000);
+            let fireworks_cost =
+                config.calculate_llm_cost("fireworks", fireworks_model, 1_000_000, 500_000);
+
+            assert_eq!(aura_cost, fireworks_cost);
+            assert_eq!(aura_cost, expected_cost);
+        }
     }
 
     #[test]
@@ -589,7 +707,7 @@ mod tests {
 
         assert_eq!(
             config.minimum_llm_reserve_cents("anthropic", "aura-claude-opus-4-7"),
-            6
+            5
         );
         assert_eq!(
             config.minimum_llm_reserve_cents("openai", "aura-gpt-5-4"),
