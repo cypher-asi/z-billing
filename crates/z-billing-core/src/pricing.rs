@@ -211,10 +211,6 @@ impl Default for PricingConfig {
         );
 
         // Fireworks-hosted open-weight models at vendor/base rates.
-        let deepseek_v3_2_pricing = LlmPricing {
-            input_credits_per_million: 56,
-            output_credits_per_million: 168,
-        };
         let kimi_k2_5_pricing = LlmPricing {
             input_credits_per_million: 60,
             output_credits_per_million: 300,
@@ -239,14 +235,6 @@ impl Default for PricingConfig {
             input_credits_per_million: 15,
             output_credits_per_million: 60,
         };
-        llm_pricing.insert(
-            ModelKey::new("fireworks", "aura-deepseek-v3-2"),
-            deepseek_v3_2_pricing.clone(),
-        );
-        llm_pricing.insert(
-            ModelKey::new("fireworks", "accounts/fireworks/models/deepseek-v3p2"),
-            deepseek_v3_2_pricing,
-        );
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-kimi-k2-5"),
             kimi_k2_5_pricing.clone(),
@@ -550,9 +538,6 @@ mod tests {
             .contains_key(&ModelKey::new("fireworks", "aura-kimi-k2-6")));
         assert!(config
             .llm_pricing
-            .contains_key(&ModelKey::new("fireworks", "aura-deepseek-v3-2")));
-        assert!(config
-            .llm_pricing
             .contains_key(&ModelKey::new("fireworks", "aura-oss-120b")));
         assert!(config.llm_pricing.contains_key(&ModelKey::new(
             "fireworks",
@@ -647,11 +632,6 @@ mod tests {
         for (aura_model, fireworks_model, expected_cost) in [
             ("aura-kimi-k2-5", "accounts/fireworks/models/kimi-k2p5", 210),
             ("aura-kimi-k2-6", "accounts/fireworks/models/kimi-k2p6", 295),
-            (
-                "aura-deepseek-v3-2",
-                "accounts/fireworks/models/deepseek-v3p2",
-                140,
-            ),
             (
                 "aura-oss-120b",
                 "accounts/fireworks/models/gpt-oss-120b",
