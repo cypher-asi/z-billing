@@ -454,3 +454,96 @@ pub async fn admin_add_credits(
         "transaction_id": tx.id.to_string()
     })))
 }
+
+// ============================================================================
+// Signup Grant
+// ============================================================================
+
+/// Default signup grant amount if env var is not set (5000 credits = $50).
+fn signup_grant_amount() -> i64 {
+    std::env::var("SIGNUP_GRANT_CREDITS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5000)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SignupGrantRequest {
+    pub user_id: String,
+}
+
+/// Grant one-time signup credits to a new user.
+///
+/// Idempotent: if the user has already received a signup grant, returns
+/// `granted: false`. Uses `signup_grant_at` timestamp on the account for
+/// O(1) duplicate detection.
+///
+/// Requires service-to-service auth via `X-API-Key` header.
+pub async fn signup_grant(
+    State(state): State<Arc<AppState>>,
+    _auth: crate::auth::ServiceAuth,
+    Json(body): Json<SignupGrantRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = body
+        .user_id
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid user ID".into()))?;
+
+    let amount = signup_grant_amount();
+
+    // Get or create account
+    let account = match state.store.get_account(&user_id)? {
+        Some(a) => a,
+        None => {
+            let new_account = z_billing_core::Account::new(user_id);
+            state.store.put_account(&new_account)?;
+            new_account
+        }
+    };
+
+    // Check if already granted
+    if account.signup_grant_at.is_some() {
+        return Ok(Json(serde_json::json!({
+            "granted": false,
+            "reason": "already_granted",
+            "balance_cents": account.balance_cents,
+        })));
+    }
+
+    // Grant credits
+    let new_balance = account.balance_cents + amount;
+    let tx = CreditTransaction::signup_grant(user_id, amount, new_balance);
+
+    let balance = state.store.add_credits(&user_id, amount, &tx)?;
+
+    // Mark signup grant as issued
+    let mut updated = state.store.get_account(&user_id)?.unwrap_or(account);
+    updated.signup_grant_at = Some(chrono::Utc::now());
+    updated.updated_at = chrono::Utc::now();
+    state.store.put_account(&updated)?;
+
+    // Broadcast balance update
+    #[allow(clippy::cast_precision_loss)]
+    let _ = state.balance_tx.send(
+        serde_json::json!({
+            "type": "balance.updated",
+            "userId": user_id.to_string(),
+            "balanceCents": balance,
+            "balanceFormatted": format!("${:.2}", balance as f64 / 100.0),
+        })
+        .to_string(),
+    );
+
+    tracing::info!(
+        user_id = %user_id,
+        amount_cents = %amount,
+        new_balance = %balance,
+        "Signup credit grant issued"
+    );
+
+    Ok(Json(serde_json::json!({
+        "granted": true,
+        "amount_cents": amount,
+        "balance_cents": balance,
+    })))
+}

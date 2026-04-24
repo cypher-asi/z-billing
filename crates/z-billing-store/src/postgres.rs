@@ -37,8 +37,9 @@ impl Store for PgStore {
                     r#"
                     INSERT INTO accounts (user_id, balance_cents, lifetime_purchased_cents,
                         lifetime_granted_cents, lifetime_used_cents, subscription, auto_refill,
-                        lago_customer_id, stripe_customer_id, created_at, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        lago_customer_id, stripe_customer_id, signup_grant_at, last_daily_grant_at,
+                        created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                     ON CONFLICT (user_id) DO UPDATE SET
                         balance_cents = $2,
                         lifetime_purchased_cents = $3,
@@ -48,7 +49,9 @@ impl Store for PgStore {
                         auto_refill = $7,
                         lago_customer_id = $8,
                         stripe_customer_id = $9,
-                        updated_at = $11
+                        signup_grant_at = $10,
+                        last_daily_grant_at = $11,
+                        updated_at = $13
                     "#,
                 )
                 .bind(account.user_id.as_uuid())
@@ -60,6 +63,8 @@ impl Store for PgStore {
                 .bind(serde_json::to_value(&account.auto_refill).unwrap_or_default())
                 .bind(&account.lago_customer_id)
                 .bind(&account.stripe_customer_id)
+                .bind(account.signup_grant_at)
+                .bind(account.last_daily_grant_at)
                 .bind(account.created_at)
                 .bind(account.updated_at)
                 .execute(&pool)
@@ -530,6 +535,8 @@ struct AccountRow {
     auto_refill: Option<serde_json::Value>,
     lago_customer_id: Option<String>,
     stripe_customer_id: Option<String>,
+    signup_grant_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_daily_grant_at: Option<chrono::DateTime<chrono::Utc>>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -550,6 +557,8 @@ impl AccountRow {
                 .and_then(|v| serde_json::from_value(v).ok()),
             lago_customer_id: self.lago_customer_id,
             stripe_customer_id: self.stripe_customer_id,
+            signup_grant_at: self.signup_grant_at,
+            last_daily_grant_at: self.last_daily_grant_at,
             created_at: self.created_at,
             updated_at: self.updated_at,
         }

@@ -154,6 +154,56 @@ impl CreditTransaction {
             created_at: Utc::now(),
         }
     }
+
+    /// Create a new signup grant transaction.
+    #[must_use]
+    pub fn signup_grant(user_id: UserId, amount_cents: i64, balance_after_cents: i64) -> Self {
+        Self {
+            id: TransactionId::generate(),
+            user_id,
+            amount_cents,
+            transaction_type: TransactionType::SignupGrant,
+            balance_after_cents,
+            description: "Signup credit grant".to_string(),
+            metadata: serde_json::Value::Null,
+            created_at: Utc::now(),
+        }
+    }
+
+    /// Create a new daily grant transaction.
+    #[must_use]
+    pub fn daily_grant(user_id: UserId, amount_cents: i64, balance_after_cents: i64) -> Self {
+        Self {
+            id: TransactionId::generate(),
+            user_id,
+            amount_cents,
+            transaction_type: TransactionType::DailyGrant,
+            balance_after_cents,
+            description: "Daily credit grant".to_string(),
+            metadata: serde_json::Value::Null,
+            created_at: Utc::now(),
+        }
+    }
+
+    /// Create a new referral bonus transaction.
+    #[must_use]
+    pub fn referral_bonus(
+        user_id: UserId,
+        amount_cents: i64,
+        balance_after_cents: i64,
+        description: String,
+    ) -> Self {
+        Self {
+            id: TransactionId::generate(),
+            user_id,
+            amount_cents,
+            transaction_type: TransactionType::ReferralBonus,
+            balance_after_cents,
+            description,
+            metadata: serde_json::Value::Null,
+            created_at: Utc::now(),
+        }
+    }
 }
 
 /// Type of credit transaction.
@@ -177,6 +227,15 @@ pub enum TransactionType {
 
     /// Automatic refill triggered.
     AutoRefill,
+
+    /// One-time signup credit grant.
+    SignupGrant,
+
+    /// Daily credit grant (use-it-or-lose-it).
+    DailyGrant,
+
+    /// Referral bonus for inviter or invitee.
+    ReferralBonus,
 }
 
 impl TransactionType {
@@ -190,6 +249,9 @@ impl TransactionType {
                 | Self::Refund
                 | Self::Bonus
                 | Self::AutoRefill
+                | Self::SignupGrant
+                | Self::DailyGrant
+                | Self::ReferralBonus
         )
     }
 
@@ -236,9 +298,45 @@ mod tests {
         assert!(TransactionType::Refund.is_credit());
         assert!(TransactionType::Bonus.is_credit());
         assert!(TransactionType::AutoRefill.is_credit());
+        assert!(TransactionType::SignupGrant.is_credit());
+        assert!(TransactionType::DailyGrant.is_credit());
+        assert!(TransactionType::ReferralBonus.is_credit());
         assert!(!TransactionType::Usage.is_credit());
 
         assert!(TransactionType::Usage.is_debit());
         assert!(!TransactionType::Purchase.is_debit());
+        assert!(!TransactionType::SignupGrant.is_debit());
+        assert!(!TransactionType::DailyGrant.is_debit());
+        assert!(!TransactionType::ReferralBonus.is_debit());
+    }
+
+    #[test]
+    fn signup_grant_transaction() {
+        let user_id = UserId::generate();
+        let tx = CreditTransaction::signup_grant(user_id, 5000, 5000);
+
+        assert_eq!(tx.amount_cents, 5000);
+        assert_eq!(tx.transaction_type, TransactionType::SignupGrant);
+        assert_eq!(tx.balance_after_cents, 5000);
+    }
+
+    #[test]
+    fn daily_grant_transaction() {
+        let user_id = UserId::generate();
+        let tx = CreditTransaction::daily_grant(user_id, 200, 1200);
+
+        assert_eq!(tx.amount_cents, 200);
+        assert_eq!(tx.transaction_type, TransactionType::DailyGrant);
+        assert_eq!(tx.balance_after_cents, 1200);
+    }
+
+    #[test]
+    fn referral_bonus_transaction() {
+        let user_id = UserId::generate();
+        let tx = CreditTransaction::referral_bonus(user_id, 5000, 10000, "Referral from user xyz".into());
+
+        assert_eq!(tx.amount_cents, 5000);
+        assert_eq!(tx.transaction_type, TransactionType::ReferralBonus);
+        assert_eq!(tx.balance_after_cents, 10000);
     }
 }

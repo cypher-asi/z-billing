@@ -69,6 +69,12 @@ pub struct Account {
     /// Stripe customer ID for payments.
     pub stripe_customer_id: Option<String>,
 
+    /// When the one-time signup credit grant was issued (None = not yet granted).
+    pub signup_grant_at: Option<DateTime<Utc>>,
+
+    /// When daily credits were last granted (None = never).
+    pub last_daily_grant_at: Option<DateTime<Utc>>,
+
     /// When the account was created.
     pub created_at: DateTime<Utc>,
 
@@ -91,6 +97,8 @@ impl Account {
             auto_refill: None,
             lago_customer_id: None,
             stripe_customer_id: None,
+            signup_grant_at: None,
+            last_daily_grant_at: None,
             created_at: now,
             updated_at: now,
         }
