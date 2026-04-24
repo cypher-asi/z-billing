@@ -392,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn effective_required_cents_uses_lower_zero_pro_reserve() {
+    fn effective_required_cents_same_for_zero_pro_and_non_pro() {
         let pricing = z_billing_core::PricingConfig::default();
         let request = CheckBalanceRequest {
             user_id: "user-1".to_string(),
@@ -402,7 +402,8 @@ mod tests {
             model: Some("aura-claude-opus-4-7".to_string()),
         };
 
-        assert_eq!(effective_required_cents(&pricing, true, &request), 4);
+        // 20% markup for everyone — Zero Pro gets same reserve
+        assert_eq!(effective_required_cents(&pricing, true, &request), 5);
     }
 
     #[test]

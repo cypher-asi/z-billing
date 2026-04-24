@@ -307,12 +307,8 @@ impl Default for PricingConfig {
 }
 
 impl PricingConfig {
-    fn llm_markup_percent(is_zero_pro_user: bool) -> i64 {
-        if is_zero_pro_user {
-            10
-        } else {
-            20
-        }
+    fn llm_markup_percent(_is_zero_pro_user: bool) -> i64 {
+        20
     }
 
     fn marked_up_llm_pricing(&self, pricing: &LlmPricing, is_zero_pro_user: bool) -> LlmPricing {
@@ -686,8 +682,9 @@ mod tests {
             true,
         );
 
+        // 20% markup for everyone — Zero Pro gets same rate
         assert_eq!(non_zero_pro_cost, 12);
-        assert_eq!(zero_pro_cost, 11);
+        assert_eq!(zero_pro_cost, 12);
     }
 
     #[test]
@@ -724,6 +721,7 @@ mod tests {
             &Plan::Pro,
         );
 
+        // 20% markup across the board — all plans pay the same rate
         assert_eq!(free_cost, 12);
         assert_eq!(pro_plan_cost, 12);
     }
@@ -750,6 +748,7 @@ mod tests {
     fn minimum_llm_reserve_uses_same_pricing_table() {
         let config = PricingConfig::default();
 
+        // Reserve amounts with 20% markup across the board
         assert_eq!(
             config.minimum_llm_reserve_cents("anthropic", "aura-claude-opus-4-7"),
             5
@@ -765,9 +764,10 @@ mod tests {
     }
 
     #[test]
-    fn minimum_llm_reserve_cents_for_zero_pro_uses_lower_markup() {
+    fn minimum_llm_reserve_cents_for_zero_pro_same_as_non_pro() {
         let config = PricingConfig::default();
 
+        // 20% markup for everyone — Zero Pro doesn't get lower reserve
         assert_eq!(
             config.minimum_llm_reserve_cents_for_zero_pro_user(
                 "anthropic",
@@ -782,7 +782,7 @@ mod tests {
                 "aura-claude-opus-4-7",
                 true,
             ),
-            4
+            5
         );
     }
 
