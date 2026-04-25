@@ -203,13 +203,9 @@ pub async fn purchase_credits(
         .get_account(&auth.user_id)?
         .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
 
-    // Apply plan discount
-    let discount_percent = account.current_plan().purchase_discount_percent();
-    let final_amount = body.amount_usd * (1.0 - f64::from(discount_percent) / 100.0);
-
-    // Convert to cents
+    // Convert to cents (no tier discount — 20% markup across the board)
     #[allow(clippy::cast_possible_truncation)]
-    let amount_cents = (final_amount * 100.0).round() as i64;
+    let amount_cents = (body.amount_usd * 100.0).round() as i64;
 
     // Credits are 1:1 with cents for the original amount (before discount)
     #[allow(clippy::cast_possible_truncation)]
@@ -218,8 +214,6 @@ pub async fn purchase_credits(
     tracing::info!(
         user_id = %auth.user_id,
         amount_usd = %body.amount_usd,
-        discount_percent = %discount_percent,
-        final_amount = %final_amount,
         amount_cents = %amount_cents,
         credits_amount = %credits_amount,
         "Initiating credit purchase"
@@ -566,35 +560,27 @@ pub async fn signup_grant(
 // Daily Grant
 // ============================================================================
 
-/// Daily grant amount based on plan and Zero Pro status.
-/// Zero Pro users get a boost on top of their plan amount.
-fn daily_grant_amount(plan: &z_billing_core::Plan, is_zero_pro: bool) -> i64 {
-    let base_env_key = match plan {
-        z_billing_core::Plan::Free => "DAILY_GRANT_FREE",
-        z_billing_core::Plan::Standard => "DAILY_GRANT_STANDARD",
+/// Daily grant amount based on plan tier.
+fn daily_grant_amount(plan: &z_billing_core::Plan) -> i64 {
+    let normalized = plan.normalized();
+    let env_key = match normalized {
+        z_billing_core::Plan::Mortal => "DAILY_GRANT_MORTAL",
         z_billing_core::Plan::Pro => "DAILY_GRANT_PRO",
-        z_billing_core::Plan::Enterprise => "DAILY_GRANT_ENTERPRISE",
+        z_billing_core::Plan::Crusader => "DAILY_GRANT_CRUSADER",
+        z_billing_core::Plan::Sage => "DAILY_GRANT_SAGE",
+        _ => "DAILY_GRANT_MORTAL",
     };
-    let base_default = match plan {
-        z_billing_core::Plan::Free => 200,        // $2.00
-        z_billing_core::Plan::Standard => 400,    // $4.00
-        z_billing_core::Plan::Pro => 600,         // $6.00
-        z_billing_core::Plan::Enterprise => 1000, // $10.00
+    let default = match normalized {
+        z_billing_core::Plan::Mortal => 50,       // $0.50
+        z_billing_core::Plan::Pro => 100,         // $1.00
+        z_billing_core::Plan::Crusader => 200,    // $2.00
+        z_billing_core::Plan::Sage => 400,        // $4.00
+        _ => 50,
     };
-    let base = std::env::var(base_env_key)
+    std::env::var(env_key)
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(base_default);
-
-    if is_zero_pro {
-        let boost = std::env::var("DAILY_GRANT_ZERO_PRO_BOOST")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(200); // Extra $2.00/day for Zero Pro members
-        base + boost
-    } else {
-        base
-    }
+        .unwrap_or(default)
 }
 
 /// Check if the account is eligible for a daily grant and issue it if so.
@@ -621,7 +607,7 @@ pub fn try_daily_grant(
     }
 
     let plan = account.current_plan();
-    let amount = daily_grant_amount(&plan, account.is_zero_pro);
+    let amount = daily_grant_amount(&plan);
     if amount <= 0 {
         return Ok(None);
     }
@@ -690,7 +676,7 @@ pub async fn daily_grant(
     match try_daily_grant(state.store.as_ref(), &state.balance_tx, &account)? {
         Some(balance) => Ok(Json(serde_json::json!({
             "granted": true,
-            "amount_cents": daily_grant_amount(&account.current_plan(), account.is_zero_pro),
+            "amount_cents": daily_grant_amount(&account.current_plan()),
             "balance_cents": balance,
         }))),
         None => Ok(Json(serde_json::json!({
@@ -705,20 +691,35 @@ pub async fn daily_grant(
 // Referral Grant
 // ============================================================================
 
-/// Default referral grant amount if env var is not set (5000 credits = $50).
-fn referral_grant_amount() -> i64 {
-    std::env::var("REFERRAL_GRANT_CREDITS")
+/// Referral grant amount for the invitee (always the same regardless of tier).
+fn referral_invitee_amount() -> i64 {
+    std::env::var("REFERRAL_GRANT_INVITEE_CREDITS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(5000)
 }
 
-/// Bonus for Pro inviters (7500 credits = $75).
-fn referral_grant_amount_pro_inviter() -> i64 {
-    std::env::var("REFERRAL_GRANT_PRO_INVITER_CREDITS")
+/// Referral grant amount for the inviter, scaled by their tier.
+fn referral_inviter_amount(plan: &z_billing_core::Plan) -> i64 {
+    let normalized = plan.normalized();
+    let env_key = match normalized {
+        z_billing_core::Plan::Mortal => "REFERRAL_GRANT_INVITER_MORTAL",
+        z_billing_core::Plan::Pro => "REFERRAL_GRANT_INVITER_PRO",
+        z_billing_core::Plan::Crusader => "REFERRAL_GRANT_INVITER_CRUSADER",
+        z_billing_core::Plan::Sage => "REFERRAL_GRANT_INVITER_SAGE",
+        _ => "REFERRAL_GRANT_INVITER_MORTAL",
+    };
+    let default = match normalized {
+        z_billing_core::Plan::Mortal => 5000,     // $50
+        z_billing_core::Plan::Pro => 7500,        // $75
+        z_billing_core::Plan::Crusader => 10000,  // $100
+        z_billing_core::Plan::Sage => 15000,      // $150
+        _ => 5000,
+    };
+    std::env::var(env_key)
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(7500)
+        .unwrap_or(default)
 }
 
 /// Request body for the referral grant endpoint.
@@ -781,7 +782,7 @@ pub async fn referral_grant(
         })));
     }
 
-    let invitee_amount = referral_grant_amount();
+    let invitee_amount = referral_invitee_amount();
 
     // Grant to invitee
     let invitee_new_balance = invitee_account.balance_cents + invitee_amount;
@@ -815,11 +816,7 @@ pub async fn referral_grant(
         }
     };
 
-    let inviter_amount = if inviter_account.current_plan() == z_billing_core::Plan::Pro {
-        referral_grant_amount_pro_inviter()
-    } else {
-        referral_grant_amount()
-    };
+    let inviter_amount = referral_inviter_amount(&inviter_account.current_plan());
 
     // Grant to inviter
     let inviter_new_balance = inviter_account.balance_cents + inviter_amount;
@@ -887,72 +884,64 @@ mod tests {
     #[test]
     fn daily_grant_amount_defaults() {
         let _lock = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("DAILY_GRANT_FREE");
-        std::env::remove_var("DAILY_GRANT_STANDARD");
+        std::env::remove_var("DAILY_GRANT_MORTAL");
         std::env::remove_var("DAILY_GRANT_PRO");
-        std::env::remove_var("DAILY_GRANT_ENTERPRISE");
-        std::env::remove_var("DAILY_GRANT_ZERO_PRO_BOOST");
+        std::env::remove_var("DAILY_GRANT_CRUSADER");
+        std::env::remove_var("DAILY_GRANT_SAGE");
 
-        assert_eq!(daily_grant_amount(&Plan::Free, false), 200);
-        assert_eq!(daily_grant_amount(&Plan::Standard, false), 400);
-        assert_eq!(daily_grant_amount(&Plan::Pro, false), 600);
-        assert_eq!(daily_grant_amount(&Plan::Enterprise, false), 1000);
+        assert_eq!(daily_grant_amount(&Plan::Mortal), 50);
+        assert_eq!(daily_grant_amount(&Plan::Pro), 100);
+        assert_eq!(daily_grant_amount(&Plan::Crusader), 200);
+        assert_eq!(daily_grant_amount(&Plan::Sage), 400);
     }
 
     #[test]
-    fn daily_grant_amount_zero_pro_boost() {
+    fn daily_grant_amount_legacy_plans_normalize() {
         let _lock = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("DAILY_GRANT_FREE");
-        std::env::remove_var("DAILY_GRANT_ZERO_PRO_BOOST");
+        std::env::remove_var("DAILY_GRANT_MORTAL");
+        std::env::remove_var("DAILY_GRANT_PRO");
 
-        // Non-Pro Free user gets 200
-        assert_eq!(daily_grant_amount(&Plan::Free, false), 200);
-        // Zero Pro Free user gets 200 + 200 boost = 400
-        assert_eq!(daily_grant_amount(&Plan::Free, true), 400);
+        // Legacy Free maps to Mortal
+        assert_eq!(daily_grant_amount(&Plan::Free), 50);
+        // Legacy Standard maps to Pro
+        assert_eq!(daily_grant_amount(&Plan::Standard), 100);
     }
 
     #[test]
     fn daily_grant_amount_reads_env_vars() {
         let _lock = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("DAILY_GRANT_FREE");
-        std::env::remove_var("DAILY_GRANT_ZERO_PRO_BOOST");
-        std::env::set_var("DAILY_GRANT_FREE", "300");
-        assert_eq!(daily_grant_amount(&Plan::Free, false), 300);
-        std::env::remove_var("DAILY_GRANT_FREE");
+        std::env::remove_var("DAILY_GRANT_MORTAL");
+        std::env::set_var("DAILY_GRANT_MORTAL", "75");
+        assert_eq!(daily_grant_amount(&Plan::Mortal), 75);
+        std::env::remove_var("DAILY_GRANT_MORTAL");
     }
 
     #[test]
     fn daily_grant_amount_ignores_invalid_env_var() {
         let _lock = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("DAILY_GRANT_ZERO_PRO_BOOST");
-        std::env::set_var("DAILY_GRANT_FREE", "not_a_number");
-        assert_eq!(daily_grant_amount(&Plan::Free, false), 200);
-        std::env::remove_var("DAILY_GRANT_FREE");
+        std::env::set_var("DAILY_GRANT_MORTAL", "not_a_number");
+        assert_eq!(daily_grant_amount(&Plan::Mortal), 50);
+        std::env::remove_var("DAILY_GRANT_MORTAL");
     }
 
     #[test]
-    fn referral_grant_amount_defaults_to_5000() {
+    fn referral_invitee_amount_defaults_to_5000() {
         let _lock = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("REFERRAL_GRANT_CREDITS");
-        assert_eq!(referral_grant_amount(), 5000);
+        std::env::remove_var("REFERRAL_GRANT_INVITEE_CREDITS");
+        assert_eq!(referral_invitee_amount(), 5000);
     }
 
     #[test]
-    fn referral_grant_amount_pro_inviter_defaults_to_7500() {
+    fn referral_inviter_amount_scales_by_tier() {
         let _lock = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("REFERRAL_GRANT_PRO_INVITER_CREDITS");
-        assert_eq!(referral_grant_amount_pro_inviter(), 7500);
-    }
+        std::env::remove_var("REFERRAL_GRANT_INVITER_MORTAL");
+        std::env::remove_var("REFERRAL_GRANT_INVITER_PRO");
+        std::env::remove_var("REFERRAL_GRANT_INVITER_CRUSADER");
+        std::env::remove_var("REFERRAL_GRANT_INVITER_SAGE");
 
-    #[test]
-    fn referral_grant_amounts_read_env_vars() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        std::env::set_var("REFERRAL_GRANT_CREDITS", "3000");
-        assert_eq!(referral_grant_amount(), 3000);
-        std::env::remove_var("REFERRAL_GRANT_CREDITS");
-
-        std::env::set_var("REFERRAL_GRANT_PRO_INVITER_CREDITS", "10000");
-        assert_eq!(referral_grant_amount_pro_inviter(), 10000);
-        std::env::remove_var("REFERRAL_GRANT_PRO_INVITER_CREDITS");
+        assert_eq!(referral_inviter_amount(&Plan::Mortal), 5000);
+        assert_eq!(referral_inviter_amount(&Plan::Pro), 7500);
+        assert_eq!(referral_inviter_amount(&Plan::Crusader), 10000);
+        assert_eq!(referral_inviter_amount(&Plan::Sage), 15000);
     }
 }

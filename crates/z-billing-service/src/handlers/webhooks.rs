@@ -462,13 +462,16 @@ async fn handle_lago_subscription_started(
 
     // Determine plan from plan_code
     let plan = match plan_code {
-        Some("standard" | "plan_standard") => Plan::Standard,
         Some("pro" | "plan_pro") => Plan::Pro,
+        Some("crusader" | "plan_crusader") => Plan::Crusader,
+        Some("sage" | "plan_sage") => Plan::Sage,
+        // Legacy mappings
+        Some("standard" | "plan_standard") => Plan::Pro,
         Some(code) => {
-            tracing::warn!(plan_code = %code, "Unknown plan code, treating as Free");
-            Plan::Free
+            tracing::warn!(plan_code = %code, "Unknown plan code, treating as Mortal");
+            Plan::Mortal
         }
-        None => Plan::Free,
+        None => Plan::Mortal,
     };
 
     // Get monthly credits for this plan

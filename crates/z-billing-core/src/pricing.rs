@@ -711,7 +711,7 @@ mod tests {
             "claude-sonnet-4-6",
             10_000,
             5_000,
-            &Plan::Free,
+            &Plan::Mortal,
         );
         let pro_plan_cost = config.calculate_llm_cost_for_plan(
             "anthropic",

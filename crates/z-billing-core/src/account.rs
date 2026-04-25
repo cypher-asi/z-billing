@@ -15,23 +15,26 @@ pub const DEFAULT_AUTO_REFILL_TRIGGER_CENTS: i64 = 500;
 /// Default auto-refill amount in cents ($25).
 pub const DEFAULT_AUTO_REFILL_AMOUNT_CENTS: i64 = 2500;
 
-/// Standard plan monthly price in cents ($20).
-pub const STANDARD_PLAN_PRICE_CENTS: i64 = 2000;
+/// Pro plan monthly price in cents ($20).
+pub const PRO_PLAN_PRICE_CENTS: i64 = 2000;
 
-/// Pro plan monthly price in cents ($50).
-pub const PRO_PLAN_PRICE_CENTS: i64 = 5000;
+/// Crusader plan monthly price in cents ($60).
+pub const CRUSADER_PLAN_PRICE_CENTS: i64 = 6000;
 
-/// Standard plan monthly credit allowance.
-pub const STANDARD_PLAN_CREDITS: i64 = 2500;
+/// Sage plan monthly price in cents ($200).
+pub const SAGE_PLAN_PRICE_CENTS: i64 = 20000;
+
+/// Mortal (free) monthly credit allowance.
+pub const MORTAL_PLAN_CREDITS: i64 = 2500;
 
 /// Pro plan monthly credit allowance.
-pub const PRO_PLAN_CREDITS: i64 = 6000;
+pub const PRO_PLAN_CREDITS: i64 = 5000;
 
-/// Standard plan discount percentage on purchases.
-pub const STANDARD_PLAN_DISCOUNT_PERCENT: u8 = 10;
+/// Crusader plan monthly credit allowance.
+pub const CRUSADER_PLAN_CREDITS: i64 = 12000;
 
-/// Pro plan discount percentage on purchases.
-pub const PRO_PLAN_DISCOUNT_PERCENT: u8 = 20;
+/// Sage plan monthly credit allowance.
+pub const SAGE_PLAN_CREDITS: i64 = 40000;
 
 use crate::UserId;
 
@@ -121,7 +124,7 @@ impl Account {
     pub fn current_plan(&self) -> Plan {
         self.subscription
             .as_ref()
-            .map_or(Plan::Free, |s| s.plan.clone())
+            .map_or(Plan::Mortal, |s| s.plan.normalized())
     }
 
     /// Check if the account has an active subscription.
@@ -159,47 +162,66 @@ pub struct Subscription {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Plan {
-    /// Free tier: $0/month, 0 credits/month, pay-as-you-go only.
-    Free,
+    /// Mortal (free) tier: $0/month, 2500 credits/month, pay-as-you-go.
+    Mortal,
 
-    /// Standard plan: $20/month, 2500 credits/month, 10% discount on one-time purchases.
-    Standard,
-
-    /// Pro plan: $50/month, 6000 credits/month, 20% discount on one-time purchases.
+    /// Pro plan: $20/month, 5000 credits/month.
     Pro,
 
-    /// Enterprise plan: Custom pricing, custom credits, custom discount.
+    /// Crusader plan: $60/month, 12000 credits/month.
+    Crusader,
+
+    /// Sage plan: $200/month, 40000 credits/month.
+    Sage,
+
+    // Legacy variants for backwards compatibility with existing serialized data.
+    // These deserialize correctly but map to the equivalent new tier.
+
+    /// Legacy: maps to Mortal.
+    #[serde(alias = "free")]
+    Free,
+
+    /// Legacy: maps to Pro.
+    #[serde(alias = "standard")]
+    Standard,
+
+    /// Legacy: maps to Sage.
+    #[serde(alias = "enterprise")]
     Enterprise,
 }
 
 impl Plan {
-    /// Get the monthly credit allowance for this plan.
+    /// Normalize legacy plan variants to current tier names.
     #[must_use]
-    pub const fn monthly_credits(&self) -> i64 {
+    pub fn normalized(&self) -> Self {
         match self {
-            Self::Standard => STANDARD_PLAN_CREDITS,
-            Self::Pro => PRO_PLAN_CREDITS,
-            Self::Free | Self::Enterprise => 0, // Free=none, Enterprise=custom (set elsewhere)
+            Self::Free => Self::Mortal,
+            Self::Standard => Self::Pro,
+            Self::Enterprise => Self::Sage,
+            other => other.clone(),
         }
     }
 
-    /// Get the discount percentage for one-time purchases.
+    /// Get the monthly credit allowance for this plan.
     #[must_use]
-    pub const fn purchase_discount_percent(&self) -> u8 {
-        match self {
-            Self::Standard => STANDARD_PLAN_DISCOUNT_PERCENT,
-            Self::Pro => PRO_PLAN_DISCOUNT_PERCENT,
-            Self::Free | Self::Enterprise => 0, // Free=none, Enterprise=custom
+    pub fn monthly_credits(&self) -> i64 {
+        match self.normalized() {
+            Self::Mortal => MORTAL_PLAN_CREDITS,
+            Self::Pro => PRO_PLAN_CREDITS,
+            Self::Crusader => CRUSADER_PLAN_CREDITS,
+            Self::Sage => SAGE_PLAN_CREDITS,
+            _ => 0,
         }
     }
 
     /// Get the monthly price in cents.
     #[must_use]
-    pub const fn monthly_price_cents(&self) -> i64 {
-        match self {
-            Self::Standard => STANDARD_PLAN_PRICE_CENTS,
+    pub fn monthly_price_cents(&self) -> i64 {
+        match self.normalized() {
             Self::Pro => PRO_PLAN_PRICE_CENTS,
-            Self::Free | Self::Enterprise => 0, // Free=none, Enterprise=custom
+            Self::Crusader => CRUSADER_PLAN_PRICE_CENTS,
+            Self::Sage => SAGE_PLAN_PRICE_CENTS,
+            _ => 0,
         }
     }
 }
@@ -271,15 +293,19 @@ mod tests {
 
     #[test]
     fn plan_monthly_credits() {
-        assert_eq!(Plan::Free.monthly_credits(), 0);
-        assert_eq!(Plan::Standard.monthly_credits(), 2500);
-        assert_eq!(Plan::Pro.monthly_credits(), 6000);
+        assert_eq!(Plan::Mortal.monthly_credits(), 2500);
+        assert_eq!(Plan::Pro.monthly_credits(), 5000);
+        assert_eq!(Plan::Crusader.monthly_credits(), 12000);
+        assert_eq!(Plan::Sage.monthly_credits(), 40000);
     }
 
     #[test]
-    fn plan_discount_percent() {
-        assert_eq!(Plan::Free.purchase_discount_percent(), 0);
-        assert_eq!(Plan::Standard.purchase_discount_percent(), 10);
-        assert_eq!(Plan::Pro.purchase_discount_percent(), 20);
+    fn legacy_plan_normalization() {
+        assert_eq!(Plan::Free.normalized(), Plan::Mortal);
+        assert_eq!(Plan::Standard.normalized(), Plan::Pro);
+        assert_eq!(Plan::Enterprise.normalized(), Plan::Sage);
+        // Legacy plans have same credits as their normalized equivalents
+        assert_eq!(Plan::Free.monthly_credits(), Plan::Mortal.monthly_credits());
+        assert_eq!(Plan::Standard.monthly_credits(), Plan::Pro.monthly_credits());
     }
 }
