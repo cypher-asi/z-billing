@@ -155,8 +155,13 @@ pub struct Subscription {
     /// End of the current billing period.
     pub current_period_end: DateTime<Utc>,
 
-    /// Lago subscription ID.
+    /// Lago subscription ID (legacy).
+    #[serde(default)]
     pub lago_subscription_id: String,
+
+    /// Stripe subscription ID (direct Stripe subscriptions).
+    #[serde(default)]
+    pub stripe_subscription_id: Option<String>,
 
     /// When the subscription was created.
     pub created_at: DateTime<Utc>,

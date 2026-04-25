@@ -7,7 +7,7 @@ use axum::http::HeaderMap;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use z_billing_core::{CreditTransaction, Plan};
+use z_billing_core::{CreditTransaction, Plan, Subscription, SubscriptionStatus};
 use z_billing_store::Store;
 
 use crate::crypto::{constant_time_eq, hmac_sha256_hex};
@@ -101,6 +101,9 @@ pub async fn stripe_webhook(
         }
         "customer.subscription.deleted" => {
             handle_subscription_deleted(&state, &webhook.data.object).await?;
+        }
+        "invoice.paid" => {
+            handle_invoice_paid(&state, &webhook.data.object).await?;
         }
         "invoice.payment_failed" => {
             handle_payment_failed(&state, &webhook.data.object).await?;
@@ -209,6 +212,39 @@ async fn handle_checkout_completed(
     state: &AppState,
     data: &serde_json::Value,
 ) -> Result<(), ApiError> {
+    let mode = data.get("mode").and_then(|v| v.as_str()).unwrap_or("payment");
+
+    // Subscription checkouts are handled via customer.subscription.created webhook
+    // which fires after checkout. Here we just save the stripe_customer_id.
+    if mode == "subscription" {
+        let user_id_str = data.get("client_reference_id").and_then(|v| v.as_str());
+        let customer_id = data.get("customer").and_then(|v| v.as_str());
+
+        if let (Some(uid_str), Some(cid)) = (user_id_str, customer_id) {
+            if let Ok(user_id) = uid_str.parse::<z_billing_core::UserId>() {
+                let mut account = match state.store.get_account(&user_id)? {
+                    Some(a) => a,
+                    None => {
+                        let a = z_billing_core::Account::new(user_id);
+                        state.store.put_account(&a)?;
+                        a
+                    }
+                };
+                account.stripe_customer_id = Some(cid.to_string());
+                account.updated_at = chrono::Utc::now();
+                state.store.put_account(&account)?;
+
+                tracing::info!(
+                    user_id = %uid_str,
+                    customer_id = %cid,
+                    "Subscription checkout completed — customer ID saved"
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    // Credit purchase checkout (mode=payment)
     // Extract relevant fields
     let user_id_str = data
         .get("client_reference_id")
@@ -327,100 +363,247 @@ async fn handle_payment_succeeded(
     Ok(())
 }
 
-/// Handle Stripe subscription updates.
-///
-/// # Current Behavior
-///
-/// This handler currently only logs the event. Actual subscription state is
-/// managed through Lago, which is the source of truth for subscription status.
-/// Stripe subscription events are logged for audit purposes and potential
-/// future reconciliation.
-///
-/// # Future Considerations
-///
-/// If direct Stripe subscription management is needed (bypassing Lago), this
-/// handler should be extended to:
-/// - Update the account's subscription tier in the local store
-/// - Sync subscription status with Lago if needed
-/// - Handle downgrades/upgrades by adjusting credit grants
-async fn handle_subscription_update(
-    _state: &AppState,
-    data: &serde_json::Value,
-) -> Result<(), ApiError> {
-    let subscription_id = data.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-    let status = data
-        .get("status")
+/// Resolve a Plan from a Stripe price ID by checking env vars.
+fn plan_from_stripe_price_id(price_id: &str) -> Plan {
+    let pro_price = std::env::var("STRIPE_PRICE_PRO").unwrap_or_default();
+    let pro_legacy = std::env::var("STRIPE_PRICE_PRO_LEGACY").unwrap_or_default();
+    let crusader_price = std::env::var("STRIPE_PRICE_CRUSADER").unwrap_or_default();
+    let sage_price = std::env::var("STRIPE_PRICE_SAGE").unwrap_or_default();
+
+    if price_id == pro_price || price_id == pro_legacy {
+        Plan::Pro
+    } else if price_id == crusader_price {
+        Plan::Crusader
+    } else if price_id == sage_price {
+        Plan::Sage
+    } else {
+        tracing::warn!(price_id = %price_id, "Unknown Stripe price ID, defaulting to Mortal");
+        Plan::Mortal
+    }
+}
+
+/// Extract user ID from a Stripe subscription or invoice object via metadata.
+fn extract_user_id(data: &serde_json::Value) -> Option<z_billing_core::UserId> {
+    // Try metadata.user_id on the object itself
+    let uid_str = data
+        .get("metadata")
+        .and_then(|m| m.get("user_id"))
         .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
+        // Try subscription_details.metadata (for invoices)
+        .or_else(|| {
+            data.get("subscription_details")
+                .and_then(|d| d.get("metadata"))
+                .and_then(|m| m.get("user_id"))
+                .and_then(|v| v.as_str())
+        });
 
-    // TODO: Update account subscription status if we move away from Lago
-    // for subscription management. Currently Lago is the source of truth.
+    uid_str.and_then(|s| s.parse().ok())
+}
+
+/// Handle Stripe subscription created or updated.
+///
+/// Updates the z-billing Account to mirror Stripe subscription state.
+/// Handles new subscriptions, plan changes, cancellation pending, and status changes.
+async fn handle_subscription_update(
+    state: &AppState,
+    data: &serde_json::Value,
+) -> Result<(), ApiError> {
+    let subscription_id = data.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let status = data.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let cancel_at_period_end = data.get("cancel_at_period_end").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let user_id = match extract_user_id(data) {
+        Some(uid) => uid,
+        None => {
+            tracing::warn!(subscription_id = %subscription_id, "Subscription update — no user_id in metadata, skipping");
+            return Ok(());
+        }
+    };
+
+    // Resolve plan from price ID
+    let price_id = data
+        .get("items")
+        .and_then(|i| i.get("data"))
+        .and_then(|d| d.as_array())
+        .and_then(|a| a.first())
+        .and_then(|item| item.get("price"))
+        .and_then(|p| p.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let plan = plan_from_stripe_price_id(price_id);
+
+    // Parse billing period
+    let period_start = data.get("current_period_start").and_then(|v| v.as_i64())
+        .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
+        .unwrap_or_else(chrono::Utc::now);
+    let period_end = data.get("current_period_end").and_then(|v| v.as_i64())
+        .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
+        .unwrap_or_else(chrono::Utc::now);
+
+    // Map Stripe status
+    let sub_status = if cancel_at_period_end {
+        SubscriptionStatus::Cancelled
+    } else {
+        match status {
+            "active" | "trialing" => SubscriptionStatus::Active,
+            "past_due" => SubscriptionStatus::PastDue,
+            _ => SubscriptionStatus::Cancelled,
+        }
+    };
+
+    // Update account
+    let mut account = match state.store.get_account(&user_id)? {
+        Some(a) => a,
+        None => {
+            let a = z_billing_core::Account::new(user_id);
+            state.store.put_account(&a)?;
+            a
+        }
+    };
+
+    if let Some(cid) = data.get("customer").and_then(|v| v.as_str()) {
+        account.stripe_customer_id = Some(cid.to_string());
+    }
+
+    account.subscription = Some(Subscription {
+        plan: plan.clone(),
+        status: sub_status,
+        current_period_start: period_start,
+        current_period_end: period_end,
+        lago_subscription_id: String::new(),
+        stripe_subscription_id: Some(subscription_id.to_string()),
+        created_at: account.subscription.as_ref().map_or_else(chrono::Utc::now, |s| s.created_at),
+    });
+    account.updated_at = chrono::Utc::now();
+    state.store.put_account(&account)?;
+
     tracing::info!(
+        user_id = %user_id,
         subscription_id = %subscription_id,
+        plan = ?plan,
         status = %status,
-        "Subscription updated (informational only - Lago is source of truth)"
+        cancel_at_period_end = %cancel_at_period_end,
+        "Subscription synced to z-billing"
     );
 
     Ok(())
 }
 
-/// Handle Stripe subscription deletion.
+/// Handle Stripe subscription deleted (fully ended).
 ///
-/// # Current Behavior
-///
-/// This handler currently only logs the event. Subscription cancellation is
-/// handled through Lago's `subscription.terminated` webhook, which triggers
-/// the actual state update and any necessary cleanup.
-///
-/// # Future Considerations
-///
-/// If direct Stripe subscription management is needed, this handler should:
-/// - Mark the account's subscription as cancelled
-/// - Optionally revoke any remaining subscription credits
-/// - Trigger any cancellation workflows (email notifications, etc.)
+/// Reverts the account to Mortal tier.
 async fn handle_subscription_deleted(
-    _state: &AppState,
+    state: &AppState,
     data: &serde_json::Value,
 ) -> Result<(), ApiError> {
     let subscription_id = data.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
 
-    // TODO: Handle subscription cancellation if we move away from Lago.
-    // Currently Lago's subscription.terminated webhook handles this.
+    let user_id = match extract_user_id(data) {
+        Some(uid) => uid,
+        None => {
+            tracing::warn!(subscription_id = %subscription_id, "Subscription deleted — no user_id, skipping");
+            return Ok(());
+        }
+    };
+
+    if let Some(mut account) = state.store.get_account(&user_id)? {
+        account.subscription = None;
+        account.updated_at = chrono::Utc::now();
+        state.store.put_account(&account)?;
+
+        tracing::info!(user_id = %user_id, subscription_id = %subscription_id, "Subscription ended — reverted to Mortal");
+    }
+
+    Ok(())
+}
+
+/// Handle invoice.paid — grant monthly credits on subscription renewal.
+#[allow(clippy::cast_precision_loss)]
+async fn handle_invoice_paid(
+    state: &AppState,
+    data: &serde_json::Value,
+) -> Result<(), ApiError> {
+    // Only process subscription invoices
+    let subscription_id = match data.get("subscription").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return Ok(()),
+    };
+
+    let user_id = match extract_user_id(data) {
+        Some(uid) => uid,
+        None => {
+            tracing::warn!(subscription_id = %subscription_id, "invoice.paid — no user_id, skipping credit grant");
+            return Ok(());
+        }
+    };
+
+    let account = match state.store.get_account(&user_id)? {
+        Some(a) => a,
+        None => {
+            tracing::warn!(user_id = %user_id, "invoice.paid — account not found");
+            return Ok(());
+        }
+    };
+
+    let plan = account.current_plan();
+    let credits = plan.monthly_credits();
+    if credits <= 0 {
+        return Ok(());
+    }
+
+    let new_balance = account.balance_cents + credits;
+    let tx = CreditTransaction::monthly_allowance(user_id, credits, new_balance);
+    let balance = state.store.add_credits(&user_id, credits, &tx)?;
+
+    // Update last_monthly_grant_at
+    let mut updated = state.store.get_account(&user_id)?.unwrap_or(account);
+    updated.last_monthly_grant_at = Some(chrono::Utc::now());
+    updated.updated_at = chrono::Utc::now();
+    state.store.put_account(&updated)?;
+
+    let _ = state.balance_tx.send(
+        serde_json::json!({
+            "type": "balance.updated",
+            "userId": user_id.to_string(),
+            "balanceCents": balance,
+            "balanceFormatted": format!("${:.2}", balance as f64 / 100.0),
+        })
+        .to_string(),
+    );
+
     tracing::info!(
+        user_id = %user_id,
+        plan = ?plan,
+        credits = %credits,
+        balance = %balance,
         subscription_id = %subscription_id,
-        "Subscription deleted (informational only - Lago handles cancellation)"
+        "Monthly credits granted via invoice.paid"
     );
 
     Ok(())
 }
 
-/// Handle Stripe invoice payment failure.
-///
-/// # Current Behavior
-///
-/// This handler logs the payment failure for monitoring and alerting purposes.
-/// Stripe handles retry logic automatically based on the account's retry settings.
-///
-/// # Future Considerations
-///
-/// For production hardening, consider:
-/// - Sending notification emails to affected users
-/// - Updating account status to `payment_failed` for UI indication
-/// - Pausing service access after N consecutive failures
-/// - Integrating with alerting systems (`PagerDuty`, Slack, etc.)
+/// Handle invoice payment failure — mark subscription as past_due.
 async fn handle_payment_failed(
-    _state: &AppState,
+    state: &AppState,
     data: &serde_json::Value,
 ) -> Result<(), ApiError> {
     let invoice_id = data.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
 
-    // TODO: Implement notification system for payment failures.
-    // Consider: email notifications, account status updates, service pausing.
-    tracing::warn!(
-        invoice_id = %invoice_id,
-        "Payment failed - user may need to update payment method"
-    );
+    if let Some(user_id) = extract_user_id(data) {
+        if let Some(mut account) = state.store.get_account(&user_id)? {
+            if let Some(ref mut sub) = account.subscription {
+                sub.status = SubscriptionStatus::PastDue;
+                account.updated_at = chrono::Utc::now();
+                state.store.put_account(&account)?;
 
+                tracing::warn!(user_id = %user_id, invoice_id = %invoice_id, "Payment failed — subscription past_due");
+                return Ok(());
+            }
+        }
+    }
+
+    tracing::warn!(invoice_id = %invoice_id, "Payment failed — could not resolve user");
     Ok(())
 }
 
