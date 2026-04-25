@@ -218,7 +218,7 @@ pub async fn purchase_credits(
     #[allow(clippy::cast_possible_truncation)]
     let amount_cents = (body.amount_usd * 100.0).round() as i64;
 
-    // Credits are 1:1 with cents for the original amount (before discount)
+    // Credits are 1:1 with cents
     #[allow(clippy::cast_possible_truncation)]
     let credits_amount = (body.amount_usd * 100.0).round() as i64;
 
@@ -808,8 +808,8 @@ pub struct ReferralGrantRequest {
 /// returns `granted: false`. Both grants happen in sequence — invitee
 /// is checked first to prevent duplicate grants.
 ///
-/// The inviter gets a higher bonus if they are on a Pro plan ($75 vs $50),
-/// incentivising Pro subscription.
+/// The inviter's bonus scales by their tier (Mortal=$50, Pro=$75,
+/// Crusader=$100, Sage=$150), incentivising tier upgrades.
 ///
 /// Requires service-to-service auth via `X-API-Key` header.
 pub async fn referral_grant(

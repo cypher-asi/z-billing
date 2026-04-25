@@ -215,11 +215,10 @@ impl Plan {
     #[must_use]
     pub fn monthly_credits(&self) -> i64 {
         match self.normalized() {
-            Self::Mortal => MORTAL_PLAN_CREDITS,
+            Self::Mortal | Self::Free | Self::Standard | Self::Enterprise => MORTAL_PLAN_CREDITS,
             Self::Pro => PRO_PLAN_CREDITS,
             Self::Crusader => CRUSADER_PLAN_CREDITS,
             Self::Sage => SAGE_PLAN_CREDITS,
-            _ => 0,
         }
     }
 
@@ -227,10 +226,10 @@ impl Plan {
     #[must_use]
     pub fn monthly_price_cents(&self) -> i64 {
         match self.normalized() {
+            Self::Mortal | Self::Free | Self::Standard | Self::Enterprise => 0,
             Self::Pro => PRO_PLAN_PRICE_CENTS,
             Self::Crusader => CRUSADER_PLAN_PRICE_CENTS,
             Self::Sage => SAGE_PLAN_PRICE_CENTS,
-            _ => 0,
         }
     }
 }

@@ -359,4 +359,15 @@ mod tests {
         assert_eq!(tx.transaction_type, TransactionType::ReferralBonus);
         assert_eq!(tx.balance_after_cents, 10000);
     }
+
+    #[test]
+    fn monthly_allowance_transaction() {
+        let user_id = UserId::generate();
+        let tx = CreditTransaction::monthly_allowance(user_id, 2500, 7500);
+
+        assert_eq!(tx.amount_cents, 2500);
+        assert_eq!(tx.transaction_type, TransactionType::MonthlyAllowance);
+        assert_eq!(tx.balance_after_cents, 7500);
+        assert!(!tx.transaction_type.is_debit());
+    }
 }
