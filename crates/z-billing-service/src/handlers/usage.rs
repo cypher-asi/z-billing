@@ -364,6 +364,16 @@ pub async fn check_balance(
 
     let mut account = get_or_create_account(state.store.as_ref(), &user_id)?;
 
+    // Lazy monthly allowance: if not granted in the last 30 days, issue monthly credits
+    if let Some(new_balance) =
+        super::credits::try_monthly_allowance(state.store.as_ref(), &state.balance_tx, &account)?
+    {
+        account.balance_cents = new_balance;
+        if let Some(refreshed) = state.store.get_account(&user_id)? {
+            account = refreshed;
+        }
+    }
+
     // Lazy daily grant: if not yet granted today, issue daily credits
     if let Some(new_balance) =
         super::credits::try_daily_grant(state.store.as_ref(), &state.balance_tx, &account)?

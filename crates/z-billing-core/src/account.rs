@@ -83,6 +83,9 @@ pub struct Account {
     /// When daily credits were last granted (None = never).
     pub last_daily_grant_at: Option<DateTime<Utc>>,
 
+    /// When monthly credit allowance was last granted (None = never).
+    pub last_monthly_grant_at: Option<DateTime<Utc>>,
+
     /// When the account was created.
     pub created_at: DateTime<Utc>,
 
@@ -108,6 +111,7 @@ impl Account {
             is_zero_pro: false,
             signup_grant_at: None,
             last_daily_grant_at: None,
+            last_monthly_grant_at: None,
             created_at: now,
             updated_at: now,
         }

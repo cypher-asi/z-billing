@@ -38,8 +38,8 @@ impl Store for PgStore {
                     INSERT INTO accounts (user_id, balance_cents, lifetime_purchased_cents,
                         lifetime_granted_cents, lifetime_used_cents, subscription, auto_refill,
                         lago_customer_id, stripe_customer_id, is_zero_pro, signup_grant_at,
-                        last_daily_grant_at, created_at, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                        last_daily_grant_at, last_monthly_grant_at, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                     ON CONFLICT (user_id) DO UPDATE SET
                         balance_cents = $2,
                         lifetime_purchased_cents = $3,
@@ -52,7 +52,8 @@ impl Store for PgStore {
                         is_zero_pro = $10,
                         signup_grant_at = $11,
                         last_daily_grant_at = $12,
-                        updated_at = $14
+                        last_monthly_grant_at = $13,
+                        updated_at = $15
                     "#,
                 )
                 .bind(account.user_id.as_uuid())
@@ -67,6 +68,7 @@ impl Store for PgStore {
                 .bind(account.is_zero_pro)
                 .bind(account.signup_grant_at)
                 .bind(account.last_daily_grant_at)
+                .bind(account.last_monthly_grant_at)
                 .bind(account.created_at)
                 .bind(account.updated_at)
                 .execute(&pool)
@@ -540,6 +542,7 @@ struct AccountRow {
     is_zero_pro: bool,
     signup_grant_at: Option<chrono::DateTime<chrono::Utc>>,
     last_daily_grant_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_monthly_grant_at: Option<chrono::DateTime<chrono::Utc>>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -563,6 +566,7 @@ impl AccountRow {
             is_zero_pro: self.is_zero_pro,
             signup_grant_at: self.signup_grant_at,
             last_daily_grant_at: self.last_daily_grant_at,
+            last_monthly_grant_at: self.last_monthly_grant_at,
             created_at: self.created_at,
             updated_at: self.updated_at,
         }

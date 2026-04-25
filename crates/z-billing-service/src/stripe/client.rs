@@ -314,6 +314,84 @@ impl StripeClient {
         self.handle_response(response).await
     }
 
+    /// Create a Checkout session for subscribing to a tier plan.
+    ///
+    /// # Arguments
+    ///
+    /// * `customer_id` - Optional Stripe customer ID
+    /// * `user_id` - Our internal user ID (`client_reference_id`)
+    /// * `price_id` - Stripe Price ID for the recurring subscription
+    /// * `success_url` - URL to redirect on success
+    /// * `cancel_url` - URL to redirect on cancel
+    pub async fn create_subscription_checkout(
+        &self,
+        customer_id: Option<&str>,
+        user_id: &str,
+        price_id: &str,
+        success_url: &str,
+        cancel_url: &str,
+    ) -> Result<CheckoutSession, StripeError> {
+        let mut params = vec![
+            ("mode", "subscription".to_string()),
+            ("success_url", success_url.to_string()),
+            ("cancel_url", cancel_url.to_string()),
+            ("client_reference_id", user_id.to_string()),
+            ("line_items[0][price]", price_id.to_string()),
+            ("line_items[0][quantity]", "1".to_string()),
+            ("metadata[user_id]", user_id.to_string()),
+        ];
+
+        if let Some(cid) = customer_id {
+            params.push(("customer", cid.to_string()));
+        } else {
+            // Allow Stripe to create a customer during checkout
+            params.push(("customer_creation", "always".to_string()));
+        }
+
+        tracing::debug!(
+            user_id = %user_id,
+            price_id = %price_id,
+            "Creating Stripe subscription checkout session"
+        );
+
+        let response = self
+            .client
+            .post(format!("{}/checkout/sessions", Self::BASE_URL))
+            .basic_auth(&self.api_key, Option::<&str>::None)
+            .form(&params)
+            .send()
+            .await?;
+
+        self.handle_response(response).await
+    }
+
+    /// Create a Stripe Customer Portal session for managing subscriptions.
+    ///
+    /// # Arguments
+    ///
+    /// * `customer_id` - Stripe customer ID
+    /// * `return_url` - URL to return to after portal session
+    pub async fn create_portal_session(
+        &self,
+        customer_id: &str,
+        return_url: &str,
+    ) -> Result<serde_json::Value, StripeError> {
+        let params = [
+            ("customer", customer_id.to_string()),
+            ("return_url", return_url.to_string()),
+        ];
+
+        let response = self
+            .client
+            .post(format!("{}/billing_portal/sessions", Self::BASE_URL))
+            .basic_auth(&self.api_key, Option::<&str>::None)
+            .form(&params)
+            .send()
+            .await?;
+
+        self.handle_response(response).await
+    }
+
     /// Verify a webhook signature and parse the event.
     ///
     /// # Arguments

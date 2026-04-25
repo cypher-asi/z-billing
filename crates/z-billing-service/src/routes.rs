@@ -13,7 +13,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::handlers::{accounts, credits, health, usage, webhooks, ws};
+use crate::handlers::{accounts, credits, health, subscriptions, usage, webhooks, ws};
 use crate::state::AppState;
 
 // ============================================================================
@@ -86,6 +86,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/credits/signup-grant", post(credits::signup_grant))
         .route("/credits/daily-grant", post(credits::daily_grant))
         .route("/credits/referral-grant", post(credits::referral_grant))
+        // Subscriptions
+        .route("/subscriptions/checkout", post(subscriptions::checkout))
+        .route("/subscriptions/portal", post(subscriptions::portal))
+        .route("/subscriptions/me", get(subscriptions::status))
         // Payments (Stripe history)
         .route("/payments", get(credits::list_payments))
         // Usage routes (with their own concurrency limit)

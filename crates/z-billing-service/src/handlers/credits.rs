@@ -55,6 +55,17 @@ pub async fn get_balance(
         .get_account(&auth.user_id)?
         .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
 
+    // Lazy monthly allowance: if not granted in the last 30 days, issue monthly credits
+    if let Some(new_balance) =
+        try_monthly_allowance(state.store.as_ref(), &state.balance_tx, &account)?
+    {
+        account.balance_cents = new_balance;
+        // Re-read account to get updated last_monthly_grant_at for daily check
+        if let Some(refreshed) = state.store.get_account(&auth.user_id)? {
+            account = refreshed;
+        }
+    }
+
     // Lazy daily grant: if not yet granted today, issue daily credits
     if let Some(new_balance) =
         try_daily_grant(state.store.as_ref(), &state.balance_tx, &account)?
@@ -642,6 +653,66 @@ pub fn try_daily_grant(
         amount_cents = %amount,
         new_balance = %balance,
         "Daily credit grant issued"
+    );
+
+    Ok(Some(balance))
+}
+
+/// Check if the account is eligible for a monthly credit allowance and issue it if so.
+///
+/// Returns the new balance if a grant was issued, or None if not eligible.
+/// Checks `last_monthly_grant_at` — grants if it's been more than 30 days.
+pub fn try_monthly_allowance(
+    store: &dyn Store,
+    balance_tx: &tokio::sync::broadcast::Sender<String>,
+    account: &z_billing_core::Account,
+) -> Result<Option<i64>, ApiError> {
+    let now = chrono::Utc::now();
+
+    // Check if already granted this month (within last 30 days)
+    if let Some(last_grant) = account.last_monthly_grant_at {
+        let days_since = (now - last_grant).num_days();
+        if days_since < 30 {
+            return Ok(None);
+        }
+    }
+
+    let plan = account.current_plan();
+    let amount = plan.monthly_credits();
+    if amount <= 0 {
+        return Ok(None);
+    }
+
+    let user_id = account.user_id;
+    let new_balance = account.balance_cents + amount;
+    let tx = CreditTransaction::monthly_allowance(user_id, amount, new_balance);
+
+    let balance = store.add_credits(&user_id, amount, &tx)?;
+
+    // Update last_monthly_grant_at
+    let mut updated = store.get_account(&user_id)?.unwrap_or_else(|| account.clone());
+    updated.last_monthly_grant_at = Some(now);
+    updated.updated_at = now;
+    store.put_account(&updated)?;
+
+    // Broadcast balance update
+    #[allow(clippy::cast_precision_loss)]
+    let _ = balance_tx.send(
+        serde_json::json!({
+            "type": "balance.updated",
+            "userId": user_id.to_string(),
+            "balanceCents": balance,
+            "balanceFormatted": format!("${:.2}", balance as f64 / 100.0),
+        })
+        .to_string(),
+    );
+
+    tracing::info!(
+        user_id = %user_id,
+        plan = ?plan,
+        amount_cents = %amount,
+        new_balance = %balance,
+        "Monthly credit allowance granted"
     );
 
     Ok(Some(balance))

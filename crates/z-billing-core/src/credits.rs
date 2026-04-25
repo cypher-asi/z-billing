@@ -185,6 +185,21 @@ impl CreditTransaction {
         }
     }
 
+    /// Create a new monthly allowance transaction.
+    #[must_use]
+    pub fn monthly_allowance(user_id: UserId, amount_cents: i64, balance_after_cents: i64) -> Self {
+        Self {
+            id: TransactionId::generate(),
+            user_id,
+            amount_cents,
+            transaction_type: TransactionType::MonthlyAllowance,
+            balance_after_cents,
+            description: "Monthly credit allowance".to_string(),
+            metadata: serde_json::Value::Null,
+            created_at: Utc::now(),
+        }
+    }
+
     /// Create a new referral bonus transaction.
     #[must_use]
     pub fn referral_bonus(
@@ -236,6 +251,9 @@ pub enum TransactionType {
 
     /// Referral bonus for inviter or invitee.
     ReferralBonus,
+
+    /// Monthly credit allowance (from tier subscription or free Mortal allowance).
+    MonthlyAllowance,
 }
 
 impl TransactionType {
@@ -252,6 +270,7 @@ impl TransactionType {
                 | Self::SignupGrant
                 | Self::DailyGrant
                 | Self::ReferralBonus
+                | Self::MonthlyAllowance
         )
     }
 
@@ -301,6 +320,7 @@ mod tests {
         assert!(TransactionType::SignupGrant.is_credit());
         assert!(TransactionType::DailyGrant.is_credit());
         assert!(TransactionType::ReferralBonus.is_credit());
+        assert!(TransactionType::MonthlyAllowance.is_credit());
         assert!(!TransactionType::Usage.is_credit());
 
         assert!(TransactionType::Usage.is_debit());
