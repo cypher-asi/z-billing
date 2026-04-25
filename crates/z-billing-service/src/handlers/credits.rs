@@ -608,6 +608,12 @@ pub fn try_daily_grant(
     balance_tx: &tokio::sync::broadcast::Sender<String>,
     account: &z_billing_core::Account,
 ) -> Result<Option<i64>, ApiError> {
+    // Only activate daily grants for users who have received their signup grant.
+    // This prevents existing users from getting surprise credits on deploy.
+    if account.signup_grant_at.is_none() {
+        return Ok(None);
+    }
+
     let today = chrono::Utc::now().date_naive();
 
     // Check if already granted today
@@ -667,6 +673,11 @@ pub fn try_monthly_allowance(
     balance_tx: &tokio::sync::broadcast::Sender<String>,
     account: &z_billing_core::Account,
 ) -> Result<Option<i64>, ApiError> {
+    // Only activate monthly grants for users who have received their signup grant.
+    if account.signup_grant_at.is_none() {
+        return Ok(None);
+    }
+
     let now = chrono::Utc::now();
 
     // Check if already granted this month (within last 30 days)
