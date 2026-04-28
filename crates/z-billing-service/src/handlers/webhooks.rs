@@ -477,6 +477,65 @@ async fn handle_subscription_update(
     account.updated_at = chrono::Utc::now();
     state.store.put_account(&account)?;
 
+    // Grant referral credits on first subscription if this user was referred.
+    // Only fires once — checked via ReferralBonus transaction history.
+    if let Some(ref inviter_id_str) = account.referred_by {
+        if let Ok(inviter_id) = inviter_id_str.parse::<z_billing_core::UserId>() {
+            // Check if referral already granted
+            let txs = state.store.list_transactions_by_user(&user_id, 100, 0)?;
+            let already_granted = txs.iter().any(|t| {
+                t.transaction_type == z_billing_core::TransactionType::ReferralBonus
+            });
+
+            if !already_granted {
+                let amount = super::credits::referral_grant_amount();
+
+                // Grant to invitee
+                let invitee_balance = {
+                    let acc = state.store.get_account(&user_id)?.unwrap_or(account.clone());
+                    let nb = acc.balance_cents + amount;
+                    let tx = CreditTransaction::referral_bonus(user_id, amount, nb, format!("Referral bonus — invited by {inviter_id_str}"));
+                    state.store.add_credits(&user_id, amount, &tx)?
+                };
+
+                // Grant to inviter
+                let inviter_balance = {
+                    let acc = match state.store.get_account(&inviter_id)? {
+                        Some(a) => a,
+                        None => {
+                            let a = z_billing_core::Account::new(inviter_id);
+                            state.store.put_account(&a)?;
+                            a
+                        }
+                    };
+                    let nb = acc.balance_cents + amount;
+                    let tx = CreditTransaction::referral_bonus(inviter_id, amount, nb, format!("Referral bonus — {} subscribed", user_id));
+                    state.store.add_credits(&inviter_id, amount, &tx)?
+                };
+
+                tracing::info!(
+                    user_id = %user_id,
+                    inviter_id = %inviter_id_str,
+                    amount = %amount,
+                    "Referral credits granted on first subscription"
+                );
+
+                // Broadcast balance updates
+                #[allow(clippy::cast_precision_loss)]
+                let _ = state.balance_tx.send(serde_json::json!({
+                    "type": "balance.updated",
+                    "userId": user_id.to_string(),
+                    "balanceCents": invitee_balance,
+                }).to_string());
+                let _ = state.balance_tx.send(serde_json::json!({
+                    "type": "balance.updated",
+                    "userId": inviter_id_str,
+                    "balanceCents": inviter_balance,
+                }).to_string());
+            }
+        }
+    }
+
     tracing::info!(
         user_id = %user_id,
         subscription_id = %subscription_id,

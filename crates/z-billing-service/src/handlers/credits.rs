@@ -488,6 +488,9 @@ pub struct SignupGrantRequest {
     /// Whether this user has a ZERO Pro subscription.
     #[serde(default)]
     pub is_zero_pro: bool,
+    /// The user ID of who referred this user (for deferred referral credits).
+    #[serde(default)]
+    pub referred_by: Option<String>,
 }
 
 /// Grant one-time signup credits to a new user.
@@ -534,10 +537,11 @@ pub async fn signup_grant(
 
     let balance = state.store.add_credits(&user_id, amount, &tx)?;
 
-    // Mark signup grant as issued and store Zero Pro status
+    // Mark signup grant as issued and store referral + Zero Pro status
     let mut updated = state.store.get_account(&user_id)?.unwrap_or(account);
     updated.signup_grant_at = Some(chrono::Utc::now());
     updated.is_zero_pro = body.is_zero_pro;
+    updated.referred_by = body.referred_by.clone();
     updated.updated_at = chrono::Utc::now();
     state.store.put_account(&updated)?;
 
@@ -773,35 +777,12 @@ pub async fn daily_grant(
 // Referral Grant
 // ============================================================================
 
-/// Referral grant amount for the invitee (always the same regardless of tier).
-fn referral_invitee_amount() -> i64 {
-    std::env::var("REFERRAL_GRANT_INVITEE_CREDITS")
+/// Referral grant amount — flat 5,000 credits for both inviter and invitee.
+pub fn referral_grant_amount() -> i64 {
+    std::env::var("REFERRAL_GRANT_CREDITS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(5000)
-}
-
-/// Referral grant amount for the inviter, scaled by their tier.
-fn referral_inviter_amount(plan: &z_billing_core::Plan) -> i64 {
-    let normalized = plan.normalized();
-    let env_key = match normalized {
-        z_billing_core::Plan::Mortal => "REFERRAL_GRANT_INVITER_MORTAL",
-        z_billing_core::Plan::Pro => "REFERRAL_GRANT_INVITER_PRO",
-        z_billing_core::Plan::Crusader => "REFERRAL_GRANT_INVITER_CRUSADER",
-        z_billing_core::Plan::Sage => "REFERRAL_GRANT_INVITER_SAGE",
-        _ => "REFERRAL_GRANT_INVITER_MORTAL",
-    };
-    let default = match normalized {
-        z_billing_core::Plan::Mortal => 5000,     // $50
-        z_billing_core::Plan::Pro => 7500,        // $75
-        z_billing_core::Plan::Crusader => 10000,  // $100
-        z_billing_core::Plan::Sage => 15000,      // $150
-        _ => 5000,
-    };
-    std::env::var(env_key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
 }
 
 /// Request body for the referral grant endpoint.
@@ -819,8 +800,7 @@ pub struct ReferralGrantRequest {
 /// returns `granted: false`. Both grants happen in sequence — invitee
 /// is checked first to prevent duplicate grants.
 ///
-/// The inviter's bonus scales by their tier (Mortal=$50, Pro=$75,
-/// Crusader=$100, Sage=$150), incentivising tier upgrades.
+/// Both parties receive a flat 5,000 credits ($50) regardless of tier.
 ///
 /// Requires service-to-service auth via `X-API-Key` header.
 pub async fn referral_grant(
@@ -864,7 +844,7 @@ pub async fn referral_grant(
         })));
     }
 
-    let invitee_amount = referral_invitee_amount();
+    let invitee_amount = referral_grant_amount();
 
     // Grant to invitee
     let invitee_new_balance = invitee_account.balance_cents + invitee_amount;
@@ -898,7 +878,7 @@ pub async fn referral_grant(
         }
     };
 
-    let inviter_amount = referral_inviter_amount(&inviter_account.current_plan());
+    let inviter_amount = referral_grant_amount();
 
     // Grant to inviter
     let inviter_new_balance = inviter_account.balance_cents + inviter_amount;
@@ -1007,23 +987,9 @@ mod tests {
     }
 
     #[test]
-    fn referral_invitee_amount_defaults_to_5000() {
+    fn referral_grant_amount_defaults_to_5000() {
         let _lock = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("REFERRAL_GRANT_INVITEE_CREDITS");
-        assert_eq!(referral_invitee_amount(), 5000);
-    }
-
-    #[test]
-    fn referral_inviter_amount_scales_by_tier() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("REFERRAL_GRANT_INVITER_MORTAL");
-        std::env::remove_var("REFERRAL_GRANT_INVITER_PRO");
-        std::env::remove_var("REFERRAL_GRANT_INVITER_CRUSADER");
-        std::env::remove_var("REFERRAL_GRANT_INVITER_SAGE");
-
-        assert_eq!(referral_inviter_amount(&Plan::Mortal), 5000);
-        assert_eq!(referral_inviter_amount(&Plan::Pro), 7500);
-        assert_eq!(referral_inviter_amount(&Plan::Crusader), 10000);
-        assert_eq!(referral_inviter_amount(&Plan::Sage), 15000);
+        std::env::remove_var("REFERRAL_GRANT_CREDITS");
+        assert_eq!(referral_grant_amount(), 5000);
     }
 }

@@ -77,6 +77,11 @@ pub struct Account {
     #[serde(default)]
     pub is_zero_pro: bool,
 
+    /// The user ID of who referred this user (set during signup grant).
+    /// Used to grant referral credits when the user subscribes to a paid plan.
+    #[serde(default)]
+    pub referred_by: Option<String>,
+
     /// When the one-time signup credit grant was issued (None = not yet granted).
     pub signup_grant_at: Option<DateTime<Utc>>,
 
@@ -109,6 +114,7 @@ impl Account {
             lago_customer_id: None,
             stripe_customer_id: None,
             is_zero_pro: false,
+            referred_by: None,
             signup_grant_at: None,
             last_daily_grant_at: None,
             last_monthly_grant_at: None,
