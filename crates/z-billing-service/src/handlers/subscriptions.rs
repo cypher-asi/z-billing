@@ -86,12 +86,12 @@ pub async fn checkout(
     let account = state.store.get_account(&auth.user_id)?;
     let customer_id = account.as_ref().and_then(|a| a.stripe_customer_id.as_deref());
 
-    // Prevent duplicate subscriptions — if user already has an active subscription,
-    // they should use the Customer Portal to change plans instead.
+    // Prevent duplicate subscriptions — if user has any subscription (active or
+    // cancelling but not yet expired), they should use the Customer Portal instead.
     if let Some(ref acc) = account {
-        if acc.has_active_subscription() {
+        if acc.subscription.is_some() {
             return Err(ApiError::BadRequest(
-                "You already have an active subscription. Use the Customer Portal to change plans.".into(),
+                "You already have a subscription. Use the Customer Portal to manage or change plans.".into(),
             ));
         }
     }
