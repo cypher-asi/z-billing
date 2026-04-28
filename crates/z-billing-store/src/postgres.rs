@@ -100,6 +100,24 @@ impl Store for PgStore {
         })
     }
 
+    fn find_account_by_stripe_customer(&self, customer_id: &str) -> Result<Option<Account>> {
+        let pool = self.pool.clone();
+        let customer_id = customer_id.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let row = sqlx::query_as::<_, AccountRow>(
+                    "SELECT * FROM accounts WHERE stripe_customer_id = $1",
+                )
+                .bind(&customer_id)
+                .fetch_optional(&pool)
+                .await
+                .map_err(|e| StoreError::Database(e.to_string()))?;
+
+                Ok(row.map(|r| r.into_account()))
+            })
+        })
+    }
+
     fn delete_account(&self, user_id: &UserId) -> Result<()> {
         let pool = self.pool.clone();
         let user_id = *user_id;

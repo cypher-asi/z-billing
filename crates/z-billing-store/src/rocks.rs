@@ -93,6 +93,12 @@ impl Store for RocksStore {
             .transpose()
     }
 
+    fn find_account_by_stripe_customer(&self, _customer_id: &str) -> Result<Option<Account>> {
+        // RocksDB backend does not index by stripe_customer_id.
+        // This is only used as a webhook fallback and production uses PgStore.
+        Ok(None)
+    }
+
     fn delete_account(&self, user_id: &UserId) -> Result<()> {
         let cf = self.cf(cf::ACCOUNTS)?;
         let key = keys::account_key(user_id);

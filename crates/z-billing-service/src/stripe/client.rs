@@ -339,6 +339,7 @@ impl StripeClient {
             ("line_items[0][price]", price_id.to_string()),
             ("line_items[0][quantity]", "1".to_string()),
             ("metadata[user_id]", user_id.to_string()),
+            ("subscription_data[metadata][user_id]", user_id.to_string()),
         ];
 
         if let Some(cid) = customer_id {

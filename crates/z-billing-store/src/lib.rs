@@ -75,6 +75,13 @@ pub trait Store: Send + Sync {
     /// Returns an error if the database operation fails.
     fn get_account(&self, user_id: &UserId) -> Result<Option<Account>>;
 
+    /// Find an account by its Stripe customer ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
+    fn find_account_by_stripe_customer(&self, customer_id: &str) -> Result<Option<Account>>;
+
     /// Delete an account by user ID.
     ///
     /// # Errors

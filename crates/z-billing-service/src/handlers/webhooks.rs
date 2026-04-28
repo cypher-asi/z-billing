@@ -382,8 +382,11 @@ fn plan_from_stripe_price_id(price_id: &str) -> Plan {
     }
 }
 
-/// Extract user ID from a Stripe subscription or invoice object via metadata.
-fn extract_user_id(data: &serde_json::Value) -> Option<z_billing_core::UserId> {
+/// Extract user ID from a Stripe subscription or invoice object.
+///
+/// Tries metadata first, then falls back to looking up the account
+/// by the Stripe customer ID (saved during checkout.session.completed).
+fn extract_user_id(data: &serde_json::Value, state: &AppState) -> Option<z_billing_core::UserId> {
     // Try metadata.user_id on the object itself
     let uid_str = data
         .get("metadata")
@@ -397,7 +400,14 @@ fn extract_user_id(data: &serde_json::Value) -> Option<z_billing_core::UserId> {
                 .and_then(|v| v.as_str())
         });
 
-    uid_str.and_then(|s| s.parse().ok())
+    if let Some(uid) = uid_str.and_then(|s| s.parse().ok()) {
+        return Some(uid);
+    }
+
+    // Fallback: look up account by Stripe customer ID
+    let customer_id = data.get("customer").and_then(|v| v.as_str())?;
+    let account = state.store.find_account_by_stripe_customer(customer_id).ok()??;
+    Some(account.user_id)
 }
 
 /// Handle Stripe subscription created or updated.
@@ -412,10 +422,10 @@ async fn handle_subscription_update(
     let status = data.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
     let cancel_at_period_end = data.get("cancel_at_period_end").and_then(|v| v.as_bool()).unwrap_or(false);
 
-    let user_id = match extract_user_id(data) {
+    let user_id = match extract_user_id(data, state) {
         Some(uid) => uid,
         None => {
-            tracing::warn!(subscription_id = %subscription_id, "Subscription update — no user_id in metadata, skipping");
+            tracing::warn!(subscription_id = %subscription_id, "Subscription update — no user_id in metadata or customer lookup, skipping");
             return Ok(());
         }
     };
@@ -557,7 +567,7 @@ async fn handle_subscription_deleted(
 ) -> Result<(), ApiError> {
     let subscription_id = data.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
 
-    let user_id = match extract_user_id(data) {
+    let user_id = match extract_user_id(data, state) {
         Some(uid) => uid,
         None => {
             tracing::warn!(subscription_id = %subscription_id, "Subscription deleted — no user_id, skipping");
@@ -588,7 +598,7 @@ async fn handle_invoice_paid(
         None => return Ok(()),
     };
 
-    let user_id = match extract_user_id(data) {
+    let user_id = match extract_user_id(data, state) {
         Some(uid) => uid,
         None => {
             tracing::warn!(subscription_id = %subscription_id, "invoice.paid — no user_id, skipping credit grant");
@@ -649,7 +659,7 @@ async fn handle_payment_failed(
 ) -> Result<(), ApiError> {
     let invoice_id = data.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
 
-    if let Some(user_id) = extract_user_id(data) {
+    if let Some(user_id) = extract_user_id(data, state) {
         if let Some(mut account) = state.store.get_account(&user_id)? {
             if let Some(ref mut sub) = account.subscription {
                 sub.status = SubscriptionStatus::PastDue;
