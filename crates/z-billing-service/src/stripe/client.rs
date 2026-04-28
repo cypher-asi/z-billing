@@ -343,10 +343,10 @@ impl StripeClient {
 
         if let Some(cid) = customer_id {
             params.push(("customer", cid.to_string()));
-        } else {
-            // Allow Stripe to create a customer during checkout
-            params.push(("customer_creation", "always".to_string()));
         }
+        // In subscription mode, Stripe automatically creates a customer
+        // if none is provided — `customer_creation` is only valid in
+        // `payment` mode.
 
         tracing::debug!(
             user_id = %user_id,
