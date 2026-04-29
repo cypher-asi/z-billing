@@ -621,22 +621,19 @@ async fn handle_invoice_paid(
     }
 
     // Check how many monthly allowance credits have already been granted
-    // in the current billing period to avoid double-granting on plan changes.
-    let period_start = account
-        .subscription
-        .as_ref()
-        .map(|s| s.current_period_start)
-        .unwrap_or_else(|| {
-            // Fallback: use last_monthly_grant_at or 30 days ago
-            account.last_monthly_grant_at
-                .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30))
-        });
+    // in the last 30 days to avoid double-granting on plan changes.
+    // Uses a 30-day window rather than subscription period_start because
+    // the Mortal lazy monthly grant fires before any subscription exists.
+    let window_start = account
+        .last_monthly_grant_at
+        .map(|t| t - chrono::Duration::days(1))
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
 
     let txs = state.store.list_transactions_by_user(&user_id, 100, 0)?;
     let already_granted: i64 = txs.iter()
         .filter(|t| {
             t.transaction_type == z_billing_core::TransactionType::MonthlyAllowance
-                && t.created_at >= period_start
+                && t.created_at >= window_start
         })
         .map(|t| t.amount_cents)
         .sum();
