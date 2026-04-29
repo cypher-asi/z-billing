@@ -615,8 +615,42 @@ async fn handle_invoice_paid(
     };
 
     let plan = account.current_plan();
-    let credits = plan.monthly_credits();
+    let plan_credits = plan.monthly_credits();
+    if plan_credits <= 0 {
+        return Ok(());
+    }
+
+    // Check how many monthly allowance credits have already been granted
+    // in the current billing period to avoid double-granting on plan changes.
+    let period_start = account
+        .subscription
+        .as_ref()
+        .map(|s| s.current_period_start)
+        .unwrap_or_else(|| {
+            // Fallback: use last_monthly_grant_at or 30 days ago
+            account.last_monthly_grant_at
+                .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30))
+        });
+
+    let txs = state.store.list_transactions_by_user(&user_id, 100, 0)?;
+    let already_granted: i64 = txs.iter()
+        .filter(|t| {
+            t.transaction_type == z_billing_core::TransactionType::MonthlyAllowance
+                && t.created_at >= period_start
+        })
+        .map(|t| t.amount_cents)
+        .sum();
+
+    let credits = (plan_credits - already_granted).max(0);
     if credits <= 0 {
+        tracing::info!(
+            user_id = %user_id,
+            plan = ?plan,
+            plan_credits = %plan_credits,
+            already_granted = %already_granted,
+            subscription_id = %subscription_id,
+            "Monthly credits already granted this period, skipping"
+        );
         return Ok(());
     }
 
@@ -644,9 +678,10 @@ async fn handle_invoice_paid(
         user_id = %user_id,
         plan = ?plan,
         credits = %credits,
+        already_granted = %already_granted,
         balance = %balance,
         subscription_id = %subscription_id,
-        "Monthly credits granted via invoice.paid"
+        "Monthly credits granted via invoice.paid (prorated)"
     );
 
     Ok(())
