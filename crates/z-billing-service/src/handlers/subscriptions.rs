@@ -39,6 +39,9 @@ pub struct SubscriptionStatusResponse {
     pub is_subscribed: bool,
     /// Monthly credit allowance for the current plan.
     pub monthly_credits: i64,
+    /// End of current billing period (next renewal date). Null for free tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_period_end: Option<String>,
 }
 
 // ============================================================================
@@ -179,9 +182,15 @@ pub async fn status(
             .as_ref()
             .map_or(false, |s| s.status == z_billing_core::SubscriptionStatus::Active);
 
+    let period_end = account
+        .subscription
+        .as_ref()
+        .map(|s| s.current_period_end.to_rfc3339());
+
     Ok(Json(SubscriptionStatusResponse {
         plan: format!("{:?}", plan).to_lowercase(),
         is_subscribed,
         monthly_credits: plan.monthly_credits(),
+        current_period_end: period_end,
     }))
 }
