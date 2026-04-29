@@ -97,10 +97,10 @@ pub async fn checkout(
     }
 
     let success_url = format!(
-        "{}/settings?subscription=success&session_id={{CHECKOUT_SESSION_ID}}",
+        "{}/checkout/success",
         state.config.frontend_url
     );
-    let cancel_url = format!("{}/settings?subscription=cancelled", state.config.frontend_url);
+    let cancel_url = format!("{}/checkout/cancelled", state.config.frontend_url);
 
     let session = stripe
         .create_subscription_checkout(

@@ -13,7 +13,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::handlers::{accounts, credits, health, subscriptions, usage, webhooks, ws};
+use crate::handlers::{accounts, checkout_pages, credits, health, subscriptions, usage, webhooks, ws};
 use crate::state::AppState;
 
 // ============================================================================
@@ -97,6 +97,9 @@ pub fn create_router(state: AppState) -> Router {
         .layer(ConcurrencyLimitLayer::new(API_MAX_CONCURRENT_REQUESTS));
 
     Router::new()
+        // Checkout result pages (public, served as static HTML)
+        .route("/checkout/success", get(checkout_pages::success))
+        .route("/checkout/cancelled", get(checkout_pages::cancelled))
         // Health (public, no rate limit)
         .route("/health", get(health::health))
         // WebSocket (JWT auth via query param)
