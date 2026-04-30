@@ -194,3 +194,215 @@ pub async fn status(
         current_period_end: period_end,
     }))
 }
+
+// ============================================================================
+// zOS-compatible subscription endpoints
+//
+// These endpoints match the API contract expected by the zos frontend
+// billing module (/api/subscriptions/zero-pro, /status, /cancel).
+// ============================================================================
+
+/// Request body for zos Zero Pro subscription.
+#[derive(Debug, Deserialize)]
+pub struct ZosSubscribeRequest {
+    #[serde(rename = "billingDetails")]
+    pub billing_details: ZosBillingDetails,
+    #[serde(rename = "paymentMethodId")]
+    pub payment_method_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ZosBillingDetails {
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub address: Option<serde_json::Value>,
+}
+
+/// Response for zos subscribe.
+#[derive(Debug, Serialize)]
+pub struct ZosSubscribeResponse {
+    #[serde(rename = "subscriptionId")]
+    pub subscription_id: String,
+    #[serde(rename = "clientSecret")]
+    pub client_secret: Option<String>,
+    pub status: String,
+}
+
+/// Response for zos status.
+#[derive(Debug, Serialize)]
+pub struct ZosStatusResponse {
+    pub subscription: Option<ZosSubscriptionInfo>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ZosSubscriptionInfo {
+    pub status: String,
+    #[serde(rename = "type")]
+    pub sub_type: String,
+    #[serde(rename = "stripeSubscriptionId")]
+    pub stripe_subscription_id: String,
+    #[serde(rename = "currentPeriodEnd")]
+    pub current_period_end: Option<String>,
+}
+
+/// Response for zos cancel.
+#[derive(Debug, Serialize)]
+pub struct ZosCancelResponse {
+    pub cancelled: bool,
+}
+
+/// Create a Zero Pro subscription (zos-compatible inline card flow).
+///
+/// Accepts a payment method ID from the frontend Stripe Elements card form,
+/// creates or retrieves a Stripe customer, creates a subscription on the
+/// Pro tier, and returns a client secret for payment confirmation.
+pub async fn subscribe_zero_pro(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(body): Json<ZosSubscribeRequest>,
+) -> Result<Json<ZosSubscribeResponse>, ApiError> {
+    let stripe = state.stripe.as_ref().ok_or_else(|| {
+        ApiError::Internal("Stripe not configured".into())
+    })?;
+
+    // Check for existing subscription
+    let account = state.store.get_account(&auth.user_id)?;
+    if let Some(ref acc) = account {
+        if acc.subscription.is_some() {
+            return Err(ApiError::BadRequest(
+                "You already have a subscription.".into(),
+            ));
+        }
+    }
+
+    // Get the Pro price (standard $20 for new signups)
+    let price_id = stripe_price_id_for_plan("pro")?;
+
+    // Get or create Stripe customer
+    let customer_id = if let Some(cid) = account.as_ref().and_then(|a| a.stripe_customer_id.as_deref()) {
+        cid.to_string()
+    } else {
+        let customer = stripe
+            .create_customer(
+                &auth.user_id.to_string(),
+                body.billing_details.email.as_deref(),
+                body.billing_details.name.as_deref(),
+            )
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to create customer: {e}")))?;
+
+        // Save customer ID
+        let mut acc = account.unwrap_or_else(|| z_billing_core::Account::new(auth.user_id));
+        acc.stripe_customer_id = Some(customer.id.clone());
+        acc.updated_at = chrono::Utc::now();
+        state.store.put_account(&acc)?;
+
+        customer.id
+    };
+
+    // Attach payment method and set as default
+    stripe
+        .attach_payment_method(&body.payment_method_id, &customer_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to attach payment method: {e}")))?;
+
+    // Create subscription with expanded payment intent
+    let sub = stripe
+        .create_inline_subscription(
+            &customer_id,
+            &price_id,
+            &body.payment_method_id,
+            &auth.user_id.to_string(),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to create subscription: {e}")))?;
+
+    let subscription_id = sub.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let status = sub.get("status").and_then(|v| v.as_str()).unwrap_or("incomplete").to_string();
+
+    // Extract client_secret from expanded latest_invoice.payment_intent
+    let client_secret = sub
+        .get("latest_invoice")
+        .and_then(|inv| inv.get("payment_intent"))
+        .and_then(|pi| pi.get("client_secret"))
+        .and_then(|cs| cs.as_str())
+        .map(|s| s.to_string());
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        subscription_id = %subscription_id,
+        "zOS Zero Pro subscription created"
+    );
+
+    Ok(Json(ZosSubscribeResponse {
+        subscription_id,
+        client_secret,
+        status,
+    }))
+}
+
+/// Get subscription status (zos-compatible response shape).
+pub async fn status_zero_pro(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<ZosStatusResponse>, ApiError> {
+    let account = state.store.get_account(&auth.user_id)?;
+
+    let subscription = account
+        .and_then(|acc| {
+            acc.subscription.map(|sub| {
+                let status = match sub.status {
+                    z_billing_core::SubscriptionStatus::Active => "active",
+                    z_billing_core::SubscriptionStatus::Cancelled => "cancelled",
+                    z_billing_core::SubscriptionStatus::PastDue => "past_due",
+                };
+
+                ZosSubscriptionInfo {
+                    status: status.to_string(),
+                    sub_type: "ZERO".to_string(),
+                    stripe_subscription_id: sub.stripe_subscription_id.unwrap_or_default(),
+                    current_period_end: Some(sub.current_period_end.to_rfc3339()),
+                }
+            })
+        });
+
+    Ok(Json(ZosStatusResponse { subscription }))
+}
+
+/// Cancel subscription at end of billing period (zos-compatible).
+pub async fn cancel_zero_pro(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<ZosCancelResponse>, ApiError> {
+    let account = state
+        .store
+        .get_account(&auth.user_id)?
+        .ok_or_else(|| ApiError::NotFound("Account not found".into()))?;
+
+    let sub = account
+        .subscription
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("No active subscription".into()))?;
+
+    let sub_id = sub
+        .stripe_subscription_id
+        .as_deref()
+        .ok_or_else(|| ApiError::BadRequest("No Stripe subscription ID".into()))?;
+
+    let stripe = state.stripe.as_ref().ok_or_else(|| {
+        ApiError::Internal("Stripe not configured".into())
+    })?;
+
+    stripe
+        .cancel_subscription_at_period_end(sub_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to cancel: {e}")))?;
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        subscription_id = %sub_id,
+        "zOS subscription cancelled at period end"
+    );
+
+    Ok(Json(ZosCancelResponse { cancelled: true }))
+}

@@ -555,6 +555,12 @@ async fn handle_subscription_update(
         "Subscription synced to z-billing"
     );
 
+    // Sync pro status to zos-api (any paid tier = pro).
+    // cancel_at_period_end means user still has access until period ends,
+    // so they remain pro. Only handle_subscription_deleted revokes pro.
+    let is_pro = plan != Plan::Mortal;
+    sync_pro_status_to_zos(state, &user_id, is_pro);
+
     Ok(())
 }
 
@@ -581,6 +587,9 @@ async fn handle_subscription_deleted(
         state.store.put_account(&account)?;
 
         tracing::info!(user_id = %user_id, subscription_id = %subscription_id, "Subscription ended — reverted to Mortal");
+
+        // Sync pro status to zos-api (no subscription = not pro)
+        sync_pro_status_to_zos(state, &user_id, false);
     }
 
     Ok(())
@@ -904,4 +913,64 @@ fn verify_lago_signature(body: &str, signature: &str, secret: &str) -> Result<()
     } else {
         Err("Signature mismatch".into())
     }
+}
+
+/// Sync subscription pro status to zos-api.
+///
+/// Calls zos-api's internal billing endpoint to update the user's
+/// `isZeroPro` flag. Any paid tier (Pro/Crusader/Sage) sets it to true,
+/// Mortal (or no subscription) sets it to false.
+///
+/// Fire-and-forget: logs errors but does not fail the webhook handler.
+fn sync_pro_status_to_zos(state: &AppState, user_id: &z_billing_core::UserId, is_pro: bool) {
+    let zos_url = match &state.config.zos_api_url {
+        Some(url) => url.clone(),
+        None => return, // Not configured, skip silently
+    };
+    let zos_token = match &state.config.zos_api_internal_token {
+        Some(token) => token.clone(),
+        None => return,
+    };
+
+    let url = format!("{}/internal/billing/pro-status-changed", zos_url);
+    let user_id_str = user_id.to_string();
+
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        match client
+            .post(&url)
+            .header("x-internal-token", &zos_token)
+            .json(&serde_json::json!({
+                "userId": user_id_str,
+                "isZeroPro": is_pro,
+            }))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!(
+                    user_id = %user_id_str,
+                    is_pro = %is_pro,
+                    "Synced pro status to zos-api"
+                );
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    user_id = %user_id_str,
+                    status = %status,
+                    body = %body,
+                    "Failed to sync pro status to zos-api"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    user_id = %user_id_str,
+                    error = %err,
+                    "Failed to sync pro status to zos-api"
+                );
+            }
+        }
+    });
 }

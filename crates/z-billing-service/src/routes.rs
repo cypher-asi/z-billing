@@ -96,6 +96,12 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/usage", usage_routes)
         .layer(ConcurrencyLimitLayer::new(API_MAX_CONCURRENT_REQUESTS));
 
+    // zOS-compatible subscription routes (path-mapped from zos frontend billing module)
+    let zos_subscription_routes = Router::new()
+        .route("/zero-pro", post(subscriptions::subscribe_zero_pro))
+        .route("/status", get(subscriptions::status_zero_pro))
+        .route("/cancel", post(subscriptions::cancel_zero_pro));
+
     Router::new()
         // Checkout result pages (public, served as static HTML)
         .route("/checkout/success", get(checkout_pages::success))
@@ -106,6 +112,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/ws/balance", get(ws::ws_balance))
         // API v1 routes (rate limited)
         .nest("/v1", api_routes)
+        // zOS subscription routes (/api/subscriptions/*)
+        .nest("/api/subscriptions", zos_subscription_routes)
         // Webhooks (no rate limit - controlled by external services)
         .route("/webhooks/stripe", post(webhooks::stripe_webhook))
         .route("/webhooks/lago", post(webhooks::lago_webhook))

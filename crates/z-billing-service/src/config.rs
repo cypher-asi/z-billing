@@ -63,6 +63,12 @@ pub struct ServiceConfig {
 
     /// Lago organization ID (for reference).
     pub lago_organization_id: Option<String>,
+
+    /// zOS API URL for syncing pro status (optional).
+    pub zos_api_url: Option<String>,
+
+    /// zOS API internal service token (optional).
+    pub zos_api_internal_token: Option<String>,
 }
 
 /// Lago secrets file structure.
@@ -129,6 +135,10 @@ impl ServiceConfig {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(30),
             pricing: PricingConfig::default(),
+            zos_api_url: std::env::var("ZOS_API_URL").ok().filter(|s| !s.is_empty()),
+            zos_api_internal_token: std::env::var("ZOS_API_INTERNAL_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty()),
         }
     }
 }
@@ -240,6 +250,8 @@ impl Default for ServiceConfig {
             max_body_bytes: 1024 * 1024,
             request_timeout_seconds: 30,
             pricing: PricingConfig::default(),
+            zos_api_url: None,
+            zos_api_internal_token: None,
         }
     }
 }

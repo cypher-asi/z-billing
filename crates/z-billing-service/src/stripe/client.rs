@@ -393,6 +393,95 @@ impl StripeClient {
         self.handle_response(response).await
     }
 
+    /// Attach a payment method to a customer and set as default.
+    pub async fn attach_payment_method(
+        &self,
+        payment_method_id: &str,
+        customer_id: &str,
+    ) -> Result<serde_json::Value, StripeError> {
+        // Attach payment method to customer
+        let params = [("customer", customer_id.to_string())];
+        let attach_resp = self.client
+            .post(format!("{}/payment_methods/{}/attach", Self::BASE_URL, payment_method_id))
+            .basic_auth(&self.api_key, Option::<&str>::None)
+            .form(&params)
+            .send()
+            .await?;
+        let _: serde_json::Value = self.handle_response(attach_resp).await?;
+
+        // Set as default payment method
+        let params = [(
+            "invoice_settings[default_payment_method]",
+            payment_method_id.to_string(),
+        )];
+        let response = self
+            .client
+            .post(format!("{}/customers/{}", Self::BASE_URL, customer_id))
+            .basic_auth(&self.api_key, Option::<&str>::None)
+            .form(&params)
+            .send()
+            .await?;
+
+        self.handle_response(response).await
+    }
+
+    /// Create a subscription with an inline payment method (for zos card form flow).
+    ///
+    /// Uses `expand[]=latest_invoice.payment_intent` to get the client_secret
+    /// directly from the response without polling.
+    pub async fn create_inline_subscription(
+        &self,
+        customer_id: &str,
+        price_id: &str,
+        payment_method_id: &str,
+        user_id: &str,
+    ) -> Result<serde_json::Value, StripeError> {
+        let params = vec![
+            ("customer", customer_id.to_string()),
+            ("items[0][price]", price_id.to_string()),
+            ("default_payment_method", payment_method_id.to_string()),
+            ("payment_behavior", "default_incomplete".to_string()),
+            ("payment_settings[payment_method_types][]", "card".to_string()),
+            ("payment_settings[save_default_payment_method]", "on_subscription".to_string()),
+            ("metadata[user_id]", user_id.to_string()),
+            ("expand[]", "latest_invoice.payment_intent".to_string()),
+        ];
+
+        tracing::debug!(
+            user_id = %user_id,
+            price_id = %price_id,
+            "Creating inline subscription"
+        );
+
+        let response = self
+            .client
+            .post(format!("{}/subscriptions", Self::BASE_URL))
+            .basic_auth(&self.api_key, Option::<&str>::None)
+            .form(&params)
+            .send()
+            .await?;
+
+        self.handle_response(response).await
+    }
+
+    /// Cancel a subscription at the end of the billing period.
+    pub async fn cancel_subscription_at_period_end(
+        &self,
+        subscription_id: &str,
+    ) -> Result<serde_json::Value, StripeError> {
+        let params = [("cancel_at_period_end", "true".to_string())];
+
+        let response = self
+            .client
+            .post(format!("{}/subscriptions/{}", Self::BASE_URL, subscription_id))
+            .basic_auth(&self.api_key, Option::<&str>::None)
+            .form(&params)
+            .send()
+            .await?;
+
+        self.handle_response(response).await
+    }
+
     /// Verify a webhook signature and parse the event.
     ///
     /// # Arguments
