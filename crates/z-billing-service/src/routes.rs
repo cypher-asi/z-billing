@@ -142,10 +142,18 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
         header::HeaderName::from_static("x-app-platform"),
     ];
 
+    let allowed_methods = vec![
+        axum::http::Method::GET,
+        axum::http::Method::POST,
+        axum::http::Method::PUT,
+        axum::http::Method::DELETE,
+        axum::http::Method::OPTIONS,
+    ];
+
     if origins.iter().any(|o| o == "*") {
         CorsLayer::new()
             .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
-            .allow_methods(Any)
+            .allow_methods(allowed_methods)
             .allow_headers(allowed_headers)
             .allow_credentials(true)
     } else {
@@ -153,7 +161,7 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
 
         CorsLayer::new()
             .allow_origin(origins)
-            .allow_methods(Any)
+            .allow_methods(allowed_methods)
             .allow_headers(allowed_headers)
             .allow_credentials(true)
     }
