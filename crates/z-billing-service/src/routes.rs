@@ -130,10 +130,13 @@ pub fn create_router(state: AppState) -> Router {
 /// Build the CORS layer from configured origins.
 fn build_cors_layer(origins: &[String]) -> CorsLayer {
     if origins.iter().any(|o| o == "*") {
+        // Wildcard mode: allow all origins but also allow credentials
+        // by reflecting the request origin instead of using literal "*".
         CorsLayer::new()
-            .allow_origin(Any)
+            .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
             .allow_methods(Any)
             .allow_headers(Any)
+            .allow_credentials(true)
     } else {
         let origins: Vec<_> = origins.iter().filter_map(|o| o.parse().ok()).collect();
 
@@ -141,5 +144,6 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
             .allow_origin(origins)
             .allow_methods(Any)
             .allow_headers(Any)
+            .allow_credentials(true)
     }
 }
