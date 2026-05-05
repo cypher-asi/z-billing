@@ -195,6 +195,26 @@ pub async fn report_usage(
         "Usage processed"
     );
 
+    {
+        let mut props = serde_json::json!({
+            "cost_cents": cost_cents,
+            "balance_after": balance,
+            "service": auth.service_name,
+        });
+        if let UsageMetricRequest::LlmTokens { ref provider, ref model, input_tokens, output_tokens } = body.metric {
+            props["provider"] = serde_json::json!(provider);
+            props["model"] = serde_json::json!(model);
+            props["input_tokens"] = serde_json::json!(input_tokens);
+            props["output_tokens"] = serde_json::json!(output_tokens);
+        }
+        crate::mixpanel::track(
+            state.config.mixpanel_token.as_deref(),
+            "tokens_consumed",
+            &user_id.to_string(),
+            props,
+        );
+    }
+
     // Broadcast balance update to WebSocket clients
     #[allow(clippy::cast_precision_loss)]
     let _ = state.balance_tx.send(

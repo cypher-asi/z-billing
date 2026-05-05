@@ -89,7 +89,8 @@ pub async fn stripe_webhook(
     }
 
     // Handle different event types
-    match webhook.event_type.as_str() {
+    let event_type = webhook.event_type.as_str();
+    match event_type {
         "checkout.session.completed" => {
             handle_checkout_completed(&state, &webhook.data.object).await?;
         }
@@ -97,7 +98,7 @@ pub async fn stripe_webhook(
             handle_payment_succeeded(&state, &webhook.data.object).await?;
         }
         "customer.subscription.created" | "customer.subscription.updated" => {
-            handle_subscription_update(&state, &webhook.data.object).await?;
+            handle_subscription_update(&state, &webhook.data.object, event_type).await?;
         }
         "customer.subscription.deleted" => {
             handle_subscription_deleted(&state, &webhook.data.object).await?;
@@ -346,6 +347,17 @@ async fn handle_checkout_completed(
         "Credits added from Stripe checkout"
     );
 
+    crate::mixpanel::track(
+        state.config.mixpanel_token.as_deref(),
+        "payment_completed",
+        &user_id_str,
+        serde_json::json!({
+            "amount_cents": amount_total,
+            "credits_purchased": credits_amount,
+            "balance_after": balance,
+        }),
+    );
+
     Ok(())
 }
 
@@ -417,6 +429,7 @@ fn extract_user_id(data: &serde_json::Value, state: &AppState) -> Option<z_billi
 async fn handle_subscription_update(
     state: &AppState,
     data: &serde_json::Value,
+    event_type: &str,
 ) -> Result<(), ApiError> {
     let subscription_id = data.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
     let status = data.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
@@ -555,6 +568,18 @@ async fn handle_subscription_update(
         "Subscription synced to z-billing"
     );
 
+    if event_type == "customer.subscription.created" {
+        crate::mixpanel::track(
+            state.config.mixpanel_token.as_deref(),
+            "subscription_created",
+            &user_id.to_string(),
+            serde_json::json!({
+                "plan": format!("{plan:?}"),
+                "subscription_id": subscription_id,
+            }),
+        );
+    }
+
     // Sync pro status to zos-api (any paid tier = pro).
     // cancel_at_period_end means user still has access until period ends,
     // so they remain pro. Only handle_subscription_deleted revokes pro.
@@ -587,6 +612,13 @@ async fn handle_subscription_deleted(
         state.store.put_account(&account)?;
 
         tracing::info!(user_id = %user_id, subscription_id = %subscription_id, "Subscription ended — reverted to Mortal");
+
+        crate::mixpanel::track(
+            state.config.mixpanel_token.as_deref(),
+            "subscription_cancelled",
+            &user_id.to_string(),
+            serde_json::json!({}),
+        );
 
         // Sync pro status to zos-api (no subscription = not pro)
         sync_pro_status_to_zos(state, &user_id, false);
@@ -690,6 +722,19 @@ async fn handle_invoice_paid(
         "Monthly credits granted via invoice.paid (prorated)"
     );
 
+    let invoice_amount_cents = data.get("amount_paid").and_then(|v| v.as_i64()).unwrap_or(0);
+    crate::mixpanel::track(
+        state.config.mixpanel_token.as_deref(),
+        "subscription_payment_received",
+        &user_id.to_string(),
+        serde_json::json!({
+            "plan": format!("{plan:?}"),
+            "amount_cents": invoice_amount_cents,
+            "credits_granted": credits,
+            "balance_after": balance,
+        }),
+    );
+
     Ok(())
 }
 
@@ -708,6 +753,14 @@ async fn handle_payment_failed(
                 state.store.put_account(&account)?;
 
                 tracing::warn!(user_id = %user_id, invoice_id = %invoice_id, "Payment failed — subscription past_due");
+
+                crate::mixpanel::track(
+                    state.config.mixpanel_token.as_deref(),
+                    "payment_failed",
+                    &user_id.to_string(),
+                    serde_json::json!({}),
+                );
+
                 return Ok(());
             }
         }

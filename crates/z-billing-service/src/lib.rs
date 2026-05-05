@@ -28,6 +28,7 @@ pub mod crypto;
 pub mod error;
 pub mod handlers;
 pub mod lago;
+pub mod mixpanel;
 pub mod routes;
 pub mod state;
 pub mod stripe;

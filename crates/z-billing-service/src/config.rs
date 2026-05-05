@@ -69,6 +69,9 @@ pub struct ServiceConfig {
 
     /// zOS API internal service token (optional).
     pub zos_api_internal_token: Option<String>,
+
+    /// Mixpanel project token for server-side analytics (optional).
+    pub mixpanel_token: Option<String>,
 }
 
 /// Lago secrets file structure.
@@ -137,6 +140,9 @@ impl ServiceConfig {
             pricing: PricingConfig::default(),
             zos_api_url: std::env::var("ZOS_API_URL").ok().filter(|s| !s.is_empty()),
             zos_api_internal_token: std::env::var("ZOS_API_INTERNAL_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            mixpanel_token: std::env::var("MIXPANEL_PROJECT_TOKEN")
                 .ok()
                 .filter(|s| !s.is_empty()),
         }
@@ -252,6 +258,7 @@ impl Default for ServiceConfig {
             pricing: PricingConfig::default(),
             zos_api_url: None,
             zos_api_internal_token: None,
+            mixpanel_token: None,
         }
     }
 }
