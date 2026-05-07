@@ -353,6 +353,7 @@ async fn handle_checkout_completed(
         &user_id_str,
         serde_json::json!({
             "amount_cents": amount_total,
+            "amount_dollars": amount_total as f64 / 100.0,
             "credits_purchased": credits_amount,
             "balance_after": balance,
         }),
@@ -730,6 +731,7 @@ async fn handle_invoice_paid(
         serde_json::json!({
             "plan": format!("{plan:?}"),
             "amount_cents": invoice_amount_cents,
+            "amount_dollars": invoice_amount_cents as f64 / 100.0,
             "credits_granted": credits,
             "balance_after": balance,
         }),
