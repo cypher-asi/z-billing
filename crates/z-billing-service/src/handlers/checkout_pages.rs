@@ -9,7 +9,7 @@ const SUCCESS_HTML: &str = r#"<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Subscription Successful - AURA</title>
+  <title>Payment Successful - AURA</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -42,8 +42,8 @@ const SUCCESS_HTML: &str = r#"<!DOCTYPE html>
     <div class="icon">
       <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
     </div>
-    <h1>Subscription Successful</h1>
-    <p>Your plan has been activated and credits have been added to your account. You can close this page and return to AURA.</p>
+    <h1>Payment Successful</h1>
+    <p>Your purchase is complete and credits have been added to your account. You can close this page and return to AURA.</p>
   </div>
 </body>
 </html>"#;
@@ -87,7 +87,7 @@ const CANCELLED_HTML: &str = r#"<!DOCTYPE html>
       <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
     </div>
     <h1>Checkout Cancelled</h1>
-    <p>Your subscription was not completed. You can close this page and return to AURA to try again.</p>
+    <p>Your purchase was not completed. You can close this page and return to AURA to try again.</p>
   </div>
 </body>
 </html>"#;
