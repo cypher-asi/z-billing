@@ -252,6 +252,43 @@ impl Store for RocksStore {
         Ok(transactions)
     }
 
+    fn sum_monthly_allowance_since(
+        &self,
+        user_id: &UserId,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<i64> {
+        let cf_by_user = self.cf(cf::TRANSACTIONS_BY_USER)?;
+        let prefix = keys::user_transactions_prefix(user_id);
+
+        let mut upper_bound = prefix.clone();
+        upper_bound.extend([0xFF; 16]);
+
+        let iter = self.db.iterator_cf(
+            &cf_by_user,
+            IteratorMode::From(&upper_bound, rocksdb::Direction::Reverse),
+        );
+
+        let mut total: i64 = 0;
+        for item in iter {
+            let (key, _) = item.map_err(|e| StoreError::Database(e.to_string()))?;
+            if !key.starts_with(&prefix) {
+                break;
+            }
+
+            let tx_id = keys::extract_transaction_id_from_user_key(&key)?;
+            if let Some(tx) = self.get_transaction(&tx_id)? {
+                if tx.created_at < since {
+                    break;
+                }
+                if tx.transaction_type == z_billing_core::TransactionType::MonthlyAllowance {
+                    total += tx.amount_cents;
+                }
+            }
+        }
+
+        Ok(total)
+    }
+
     // =========================================================================
     // Usage Event Operations
     // =========================================================================

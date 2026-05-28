@@ -146,6 +146,22 @@ pub trait Store: Send + Sync {
         offset: usize,
     ) -> Result<Vec<CreditTransaction>>;
 
+    /// Sum the `amount_cents` of `monthly_allowance` transactions for a user
+    /// at or after the given timestamp.
+    ///
+    /// Used by the mid-cycle proration math to determine how much of the
+    /// monthly credit allowance has already been granted in the current
+    /// billing period.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
+    fn sum_monthly_allowance_since(
+        &self,
+        user_id: &UserId,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<i64>;
+
     // =========================================================================
     // Usage Event Operations (for idempotency)
     // =========================================================================

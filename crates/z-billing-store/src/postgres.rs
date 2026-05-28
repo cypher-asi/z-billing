@@ -249,6 +249,35 @@ impl Store for PgStore {
         })
     }
 
+    fn sum_monthly_allowance_since(
+        &self,
+        user_id: &UserId,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<i64> {
+        let pool = self.pool.clone();
+        let user_id = *user_id;
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let total: i64 = sqlx::query_scalar(
+                    r#"
+                    SELECT COALESCE(SUM(amount_cents), 0)::BIGINT
+                    FROM credit_transactions
+                    WHERE user_id = $1
+                      AND transaction_type = 'monthly_allowance'
+                      AND created_at >= $2
+                    "#,
+                )
+                .bind(user_id.as_uuid())
+                .bind(since)
+                .fetch_one(&pool)
+                .await
+                .map_err(|e| StoreError::Database(e.to_string()))?;
+
+                Ok(total)
+            })
+        })
+    }
+
     fn has_usage_event(&self, event_id: &str) -> Result<bool> {
         let pool = self.pool.clone();
         let event_id = event_id.to_string();
