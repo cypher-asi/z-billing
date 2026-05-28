@@ -162,6 +162,16 @@ pub trait Store: Send + Sync {
         since: chrono::DateTime<chrono::Utc>,
     ) -> Result<i64>;
 
+    /// Whether the user has ever received a `referral_bonus` transaction.
+    ///
+    /// Used to dedupe referral grants — a referred user should receive their
+    /// referral bonus at most once. Returns true on the first match.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
+    fn has_referral_bonus(&self, user_id: &UserId) -> Result<bool>;
+
     // =========================================================================
     // Usage Event Operations (for idempotency)
     // =========================================================================

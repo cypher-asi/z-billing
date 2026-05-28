@@ -278,6 +278,30 @@ impl Store for PgStore {
         })
     }
 
+    fn has_referral_bonus(&self, user_id: &UserId) -> Result<bool> {
+        let pool = self.pool.clone();
+        let user_id = *user_id;
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let exists: bool = sqlx::query_scalar(
+                    r#"
+                    SELECT EXISTS(
+                        SELECT 1 FROM credit_transactions
+                        WHERE user_id = $1
+                          AND transaction_type = 'referral_bonus'
+                    )
+                    "#,
+                )
+                .bind(user_id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .map_err(|e| StoreError::Database(e.to_string()))?;
+
+                Ok(exists)
+            })
+        })
+    }
+
     fn has_usage_event(&self, event_id: &str) -> Result<bool> {
         let pool = self.pool.clone();
         let event_id = event_id.to_string();

@@ -289,6 +289,35 @@ impl Store for RocksStore {
         Ok(total)
     }
 
+    fn has_referral_bonus(&self, user_id: &UserId) -> Result<bool> {
+        let cf_by_user = self.cf(cf::TRANSACTIONS_BY_USER)?;
+        let prefix = keys::user_transactions_prefix(user_id);
+
+        let mut upper_bound = prefix.clone();
+        upper_bound.extend([0xFF; 16]);
+
+        let iter = self.db.iterator_cf(
+            &cf_by_user,
+            IteratorMode::From(&upper_bound, rocksdb::Direction::Reverse),
+        );
+
+        for item in iter {
+            let (key, _) = item.map_err(|e| StoreError::Database(e.to_string()))?;
+            if !key.starts_with(&prefix) {
+                break;
+            }
+
+            let tx_id = keys::extract_transaction_id_from_user_key(&key)?;
+            if let Some(tx) = self.get_transaction(&tx_id)? {
+                if tx.transaction_type == z_billing_core::TransactionType::ReferralBonus {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
     // =========================================================================
     // Usage Event Operations
     // =========================================================================
@@ -639,5 +668,55 @@ mod tests {
         // Verify transaction recorded
         let transactions = store.list_transactions_by_user(&user_id, 10, 0).unwrap();
         assert_eq!(transactions.len(), 1);
+    }
+
+    #[test]
+    fn has_referral_bonus_returns_false_when_none_exists() {
+        let (store, _dir) = create_test_store();
+        let user_id = UserId::generate();
+        store.put_account(&Account::new(user_id)).unwrap();
+
+        // Other transaction types should not count.
+        let tx = CreditTransaction::purchase(user_id, 5000, 5000, "Purchase".into());
+        store.put_transaction(&tx).unwrap();
+
+        assert!(!store.has_referral_bonus(&user_id).unwrap());
+    }
+
+    #[test]
+    fn has_referral_bonus_returns_true_when_one_exists() {
+        let (store, _dir) = create_test_store();
+        let user_id = UserId::generate();
+        store.put_account(&Account::new(user_id)).unwrap();
+
+        let tx = CreditTransaction::referral_bonus(
+            user_id,
+            500,
+            500,
+            "Referral bonus — invited by abc".into(),
+        );
+        store.put_transaction(&tx).unwrap();
+
+        assert!(store.has_referral_bonus(&user_id).unwrap());
+    }
+
+    #[test]
+    fn has_referral_bonus_scoped_per_user() {
+        let (store, _dir) = create_test_store();
+        let user_with = UserId::generate();
+        let user_without = UserId::generate();
+        store.put_account(&Account::new(user_with)).unwrap();
+        store.put_account(&Account::new(user_without)).unwrap();
+
+        let tx = CreditTransaction::referral_bonus(
+            user_with,
+            500,
+            500,
+            "Referral bonus".into(),
+        );
+        store.put_transaction(&tx).unwrap();
+
+        assert!(store.has_referral_bonus(&user_with).unwrap());
+        assert!(!store.has_referral_bonus(&user_without).unwrap());
     }
 }
