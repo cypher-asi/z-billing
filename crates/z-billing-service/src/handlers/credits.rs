@@ -831,11 +831,8 @@ pub async fn referral_grant(
         }
     };
 
-    // Check if invitee already received a referral bonus by checking transactions
-    let invitee_txs = state.store.list_transactions_by_user(&invitee_id, 100, 0)?;
-    let already_granted = invitee_txs
-        .iter()
-        .any(|t| t.transaction_type == z_billing_core::TransactionType::ReferralBonus);
+    // Check if invitee already received a referral bonus
+    let already_granted = state.store.has_referral_bonus(&invitee_id)?;
 
     if already_granted {
         return Ok(Json(serde_json::json!({

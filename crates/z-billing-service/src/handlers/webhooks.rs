@@ -550,10 +550,7 @@ async fn handle_subscription_update(
     if let Some(ref inviter_id_str) = account.referred_by {
         if let Ok(inviter_id) = inviter_id_str.parse::<z_billing_core::UserId>() {
             // Check if referral already granted
-            let txs = state.store.list_transactions_by_user(&user_id, 100, 0)?;
-            let already_granted = txs.iter().any(|t| {
-                t.transaction_type == z_billing_core::TransactionType::ReferralBonus
-            });
+            let already_granted = state.store.has_referral_bonus(&user_id)?;
 
             if !already_granted {
                 let amount = super::credits::referral_grant_amount();
