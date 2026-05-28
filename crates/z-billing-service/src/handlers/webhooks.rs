@@ -395,6 +395,50 @@ fn plan_from_stripe_price_id(price_id: &str) -> Plan {
     }
 }
 
+/// Resolve the active plan for an invoice from its line items, using the
+/// supplied resolver to map a price ID to a `Plan`.
+///
+/// Picks the line item with the largest positive `amount`. For proration
+/// invoices Stripe emits two lines — a positive line for the new period and
+/// a negative line for the unused old period — so the largest positive
+/// `amount` is the new tier being charged for.
+///
+/// Reading from the invoice (rather than `account.subscription`) avoids any
+/// dependency on `customer.subscription.updated` having been persisted before
+/// `invoice.paid` arrives.
+fn plan_from_invoice_lines_with_resolver<F>(
+    data: &serde_json::Value,
+    resolver: F,
+) -> Option<Plan>
+where
+    F: Fn(&str) -> Plan,
+{
+    let lines = data
+        .get("lines")
+        .and_then(|l| l.get("data"))
+        .and_then(|d| d.as_array())?;
+
+    let (_, price_id) = lines
+        .iter()
+        .filter_map(|line| {
+            let amount = line.get("amount").and_then(serde_json::Value::as_i64)?;
+            let price_id = line
+                .get("price")
+                .and_then(|p| p.get("id"))
+                .and_then(serde_json::Value::as_str)?;
+            Some((amount, price_id))
+        })
+        .filter(|(amount, _)| *amount > 0)
+        .max_by_key(|(amount, _)| *amount)?;
+
+    Some(resolver(price_id))
+}
+
+/// Resolve the active plan for an invoice using env-configured Stripe price IDs.
+fn plan_from_invoice_lines(data: &serde_json::Value) -> Option<Plan> {
+    plan_from_invoice_lines_with_resolver(data, plan_from_stripe_price_id)
+}
+
 /// Extract user ID from a Stripe subscription or invoice object.
 ///
 /// Tries metadata first, then falls back to looking up the account
@@ -628,8 +672,40 @@ async fn handle_subscription_deleted(
     Ok(())
 }
 
+/// Compute the credit grant for a mid-cycle plan change, prorated by the
+/// fraction of the billing cycle remaining.
+///
+/// Mirrors Stripe's money-side proration: when a subscription is updated mid-cycle
+/// Stripe charges only the price *differential* for the remaining time. We grant
+/// credits the same way — `(new_plan_credits - already_granted_this_cycle)` ×
+/// the fraction of the cycle remaining — so credits issued track money charged.
+///
+/// `already_granted` is the sum of `monthly_allowance` transactions already
+/// issued in the current billing period. Passing 0 yields the full new-tier
+/// allowance prorated, which is only correct when no prior allowance has been
+/// granted this cycle (e.g. fresh subscription created mid-cycle, if that ever
+/// happens — current flow grants full month for create/cycle billing reasons).
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn prorated_upgrade_credits(
+    plan_credits: i64,
+    already_granted: i64,
+    cycle_seconds: i64,
+    remaining_seconds: i64,
+) -> i64 {
+    if cycle_seconds <= 0 {
+        return 0;
+    }
+    let diff = (plan_credits - already_granted).max(0);
+    if diff == 0 {
+        return 0;
+    }
+    let remaining = remaining_seconds.max(0);
+    let ratio = (remaining as f64 / cycle_seconds as f64).clamp(0.0, 1.0);
+    (diff as f64 * ratio).round() as i64
+}
+
 /// Handle invoice.paid — grant monthly credits on subscription renewal.
-#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
 async fn handle_invoice_paid(
     state: &AppState,
     data: &serde_json::Value,
@@ -656,39 +732,92 @@ async fn handle_invoice_paid(
         }
     };
 
-    let plan = account.current_plan();
+    // Resolve the active plan from the invoice's line items. Reading from the
+    // invoice (rather than account.subscription) keeps this handler correct
+    // even if customer.subscription.updated has not yet been persisted for the
+    // same billing event.
+    let Some(plan) = plan_from_invoice_lines(data) else {
+        tracing::warn!(
+            user_id = %user_id,
+            subscription_id = %subscription_id,
+            "invoice.paid — no resolvable plan from invoice line items, skipping",
+        );
+        return Ok(());
+    };
     let plan_credits = plan.monthly_credits();
     if plan_credits <= 0 {
         return Ok(());
     }
 
-    // Check how many monthly allowance credits have already been granted
-    // in the last 30 days to avoid double-granting on plan changes.
-    // Uses a 30-day window rather than subscription period_start because
-    // the Mortal lazy monthly grant fires before any subscription exists.
-    let window_start = account
-        .last_monthly_grant_at
-        .map(|t| t - chrono::Duration::days(1))
-        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+    let billing_reason = data
+        .get("billing_reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let invoice_amount_cents = data
+        .get("amount_paid")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
 
-    let txs = state.store.list_transactions_by_user(&user_id, 100, 0)?;
-    let already_granted: i64 = txs.iter()
-        .filter(|t| {
-            t.transaction_type == z_billing_core::TransactionType::MonthlyAllowance
-                && t.created_at >= window_start
-        })
-        .map(|t| t.amount_cents)
-        .sum();
+    // Determine credits to grant based on the kind of billing event.
+    // - subscription_update (mid-cycle plan change): grant proportional to
+    //   the fraction of the cycle remaining, mirroring Stripe's money proration.
+    // - subscription_create / subscription_cycle: grant the full monthly
+    //   allowance for the new period.
+    // - anything else (manual, threshold, etc.): skip.
+    let (credits, grant_kind) = match billing_reason {
+        "subscription_update" => {
+            if invoice_amount_cents <= 0 {
+                tracing::info!(
+                    user_id = %user_id,
+                    subscription_id = %subscription_id,
+                    billing_reason = %billing_reason,
+                    "invoice.paid — non-positive amount on plan change, skipping grant",
+                );
+                return Ok(());
+            }
+            let Some(sub) = account.subscription.as_ref() else {
+                tracing::warn!(
+                    user_id = %user_id,
+                    subscription_id = %subscription_id,
+                    "invoice.paid — subscription_update without an account subscription, skipping",
+                );
+                return Ok(());
+            };
+            let now = chrono::Utc::now();
+            let cycle_seconds = (sub.current_period_end - sub.current_period_start).num_seconds();
+            let remaining_seconds = (sub.current_period_end - now).num_seconds();
+            let already_granted = state
+                .store
+                .sum_monthly_allowance_since(&user_id, sub.current_period_start)?;
+            let c = prorated_upgrade_credits(
+                plan_credits,
+                already_granted,
+                cycle_seconds,
+                remaining_seconds,
+            );
+            (c, "prorated")
+        }
+        "subscription_create" | "subscription_cycle" => (plan_credits, "full"),
+        other => {
+            tracing::info!(
+                user_id = %user_id,
+                subscription_id = %subscription_id,
+                billing_reason = %other,
+                "invoice.paid — non-subscription billing_reason, skipping credit grant",
+            );
+            return Ok(());
+        }
+    };
 
-    let credits = (plan_credits - already_granted).max(0);
     if credits <= 0 {
         tracing::info!(
             user_id = %user_id,
             plan = ?plan,
             plan_credits = %plan_credits,
-            already_granted = %already_granted,
+            billing_reason = %billing_reason,
+            grant_kind = %grant_kind,
             subscription_id = %subscription_id,
-            "Monthly credits already granted this period, skipping"
+            "invoice.paid — no credits to grant",
         );
         return Ok(());
     }
@@ -697,11 +826,19 @@ async fn handle_invoice_paid(
     let tx = CreditTransaction::monthly_allowance(user_id, credits, new_balance);
     let balance = state.store.add_credits(&user_id, credits, &tx)?;
 
-    // Update last_monthly_grant_at
-    let mut updated = state.store.get_account(&user_id)?.unwrap_or(account);
-    updated.last_monthly_grant_at = Some(chrono::Utc::now());
-    updated.updated_at = chrono::Utc::now();
-    state.store.put_account(&updated)?;
+    // Advance the monthly clock only on full-grant events (renewal / create).
+    // For prorated mid-cycle grants we leave last_monthly_grant_at unchanged
+    // so the lazy try_monthly_allowance check still fires at the right time
+    // if a later invoice.paid is dropped.
+    if grant_kind == "full" {
+        let mut updated = state
+            .store
+            .get_account(&user_id)?
+            .unwrap_or_else(|| account.clone());
+        updated.last_monthly_grant_at = Some(chrono::Utc::now());
+        updated.updated_at = chrono::Utc::now();
+        state.store.put_account(&updated)?;
+    }
 
     let _ = state.balance_tx.send(
         serde_json::json!({
@@ -716,14 +853,14 @@ async fn handle_invoice_paid(
     tracing::info!(
         user_id = %user_id,
         plan = ?plan,
-        credits = %credits,
-        already_granted = %already_granted,
+        credits_granted = %credits,
         balance = %balance,
+        billing_reason = %billing_reason,
+        grant_kind = %grant_kind,
         subscription_id = %subscription_id,
-        "Monthly credits granted via invoice.paid (prorated)"
+        "invoice.paid — credits granted",
     );
 
-    let invoice_amount_cents = data.get("amount_paid").and_then(|v| v.as_i64()).unwrap_or(0);
     crate::mixpanel::track(
         state.config.mixpanel_token.as_deref(),
         "subscription_payment_received",
@@ -734,6 +871,8 @@ async fn handle_invoice_paid(
             "amount_dollars": invoice_amount_cents as f64 / 100.0,
             "credits_granted": credits,
             "balance_after": balance,
+            "billing_reason": billing_reason,
+            "grant_kind": grant_kind,
         }),
     );
 
@@ -1028,4 +1167,178 @@ fn sync_pro_status_to_zos(state: &AppState, user_id: &z_billing_core::UserId, is
             }
         }
     });
+}
+
+#[cfg(test)]
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+mod tests {
+    use super::*;
+
+    // ----- prorated_upgrade_credits -----
+
+    #[test]
+    fn prorated_upgrade_credits_basic_upgrade_with_prior_grant() {
+        // Pro → Crusader: (12,000 − 5,000) × (1.89 / 30) ≈ 441
+        let cycle = 30 * 86_400_i64;
+        let remaining = (1.89_f64 * 86_400_f64) as i64;
+        let credits = prorated_upgrade_credits(12_000, 5_000, cycle, remaining);
+        assert!(
+            (credits - 441).abs() <= 1,
+            "expected credits ≈ 441, got {credits}",
+        );
+    }
+
+    #[test]
+    fn prorated_upgrade_credits_no_prior_grant_returns_full_proration() {
+        // Edge case: no prior grant in cycle → grant full new-tier × ratio.
+        let cycle = 30 * 86_400_i64;
+        let remaining = 10 * 86_400_i64;
+        let credits = prorated_upgrade_credits(12_000, 0, cycle, remaining);
+        assert_eq!(credits, 4_000); // 12_000 × 10/30
+    }
+
+    #[test]
+    fn prorated_upgrade_credits_zero_remaining_returns_zero() {
+        let cycle = 30 * 86_400_i64;
+        assert_eq!(prorated_upgrade_credits(12_000, 5_000, cycle, 0), 0);
+    }
+
+    #[test]
+    fn prorated_upgrade_credits_negative_remaining_clamps_to_zero() {
+        let cycle = 30 * 86_400_i64;
+        assert_eq!(prorated_upgrade_credits(12_000, 5_000, cycle, -10_000), 0);
+    }
+
+    #[test]
+    fn prorated_upgrade_credits_zero_or_negative_cycle_returns_zero() {
+        assert_eq!(prorated_upgrade_credits(12_000, 5_000, 0, 86_400), 0);
+        assert_eq!(prorated_upgrade_credits(12_000, 5_000, -1, 86_400), 0);
+    }
+
+    #[test]
+    fn prorated_upgrade_credits_full_cycle_returns_full_diff() {
+        // remaining == cycle → ratio = 1.0 → diff = plan − already.
+        let cycle = 30 * 86_400_i64;
+        assert_eq!(prorated_upgrade_credits(12_000, 5_000, cycle, cycle), 7_000);
+    }
+
+    #[test]
+    fn prorated_upgrade_credits_remaining_exceeds_cycle_clamps_to_full_diff() {
+        // Defensive: a remaining > cycle should never happen, but ratio clamps to 1.0.
+        let cycle = 30 * 86_400_i64;
+        assert_eq!(prorated_upgrade_credits(12_000, 5_000, cycle, cycle * 2), 7_000);
+    }
+
+    #[test]
+    fn prorated_upgrade_credits_already_granted_equals_plan_returns_zero() {
+        // No remaining differential to grant.
+        let cycle = 30 * 86_400_i64;
+        let remaining = 10 * 86_400_i64;
+        assert_eq!(prorated_upgrade_credits(12_000, 12_000, cycle, remaining), 0);
+    }
+
+    #[test]
+    fn prorated_upgrade_credits_already_granted_exceeds_plan_returns_zero() {
+        // Downgrade-like input: already-granted > new-tier-credits → no grant.
+        let cycle = 30 * 86_400_i64;
+        let remaining = 10 * 86_400_i64;
+        assert_eq!(prorated_upgrade_credits(5_000, 12_000, cycle, remaining), 0);
+    }
+
+    #[test]
+    fn prorated_upgrade_credits_short_calendar_month() {
+        // Cycle anchored Jan 31 → Feb 28: 28-day cycle.
+        // Pro → Crusader with 5 days remaining: (12,000 − 5,000) × (5/28) ≈ 1250.
+        let cycle = 28 * 86_400_i64;
+        let remaining = 5 * 86_400_i64;
+        let credits = prorated_upgrade_credits(12_000, 5_000, cycle, remaining);
+        assert!(
+            (credits - 1250).abs() <= 1,
+            "expected credits ≈ 1250, got {credits}",
+        );
+    }
+
+    // ----- plan_from_invoice_lines_with_resolver -----
+
+    fn test_resolver(price_id: &str) -> Plan {
+        match price_id {
+            "price_pro" => Plan::Pro,
+            "price_crusader" => Plan::Crusader,
+            "price_sage" => Plan::Sage,
+            _ => Plan::Mortal,
+        }
+    }
+
+    #[test]
+    fn plan_from_invoice_lines_picks_largest_positive() {
+        // Proration invoice: negative line for unused old tier + positive line for new tier.
+        let data = serde_json::json!({
+            "lines": {
+                "data": [
+                    {"amount": -63, "price": {"id": "price_pro"}},
+                    {"amount": 378, "price": {"id": "price_crusader"}}
+                ]
+            }
+        });
+        let plan = plan_from_invoice_lines_with_resolver(&data, test_resolver);
+        assert_eq!(plan, Some(Plan::Crusader));
+    }
+
+    #[test]
+    fn plan_from_invoice_lines_picks_largest_among_multiple_positive() {
+        let data = serde_json::json!({
+            "lines": {
+                "data": [
+                    {"amount": 100, "price": {"id": "price_pro"}},
+                    {"amount": 6000, "price": {"id": "price_crusader"}},
+                    {"amount": 200, "price": {"id": "price_pro"}}
+                ]
+            }
+        });
+        let plan = plan_from_invoice_lines_with_resolver(&data, test_resolver);
+        assert_eq!(plan, Some(Plan::Crusader));
+    }
+
+    #[test]
+    fn plan_from_invoice_lines_no_positive_returns_none() {
+        let data = serde_json::json!({
+            "lines": {
+                "data": [
+                    {"amount": -500, "price": {"id": "price_pro"}},
+                    {"amount": -300, "price": {"id": "price_crusader"}}
+                ]
+            }
+        });
+        let plan = plan_from_invoice_lines_with_resolver(&data, test_resolver);
+        assert_eq!(plan, None);
+    }
+
+    #[test]
+    fn plan_from_invoice_lines_empty_data_returns_none() {
+        let data = serde_json::json!({"lines": {"data": []}});
+        let plan = plan_from_invoice_lines_with_resolver(&data, test_resolver);
+        assert_eq!(plan, None);
+    }
+
+    #[test]
+    fn plan_from_invoice_lines_missing_lines_returns_none() {
+        let data = serde_json::json!({});
+        let plan = plan_from_invoice_lines_with_resolver(&data, test_resolver);
+        assert_eq!(plan, None);
+    }
+
+    #[test]
+    fn plan_from_invoice_lines_lines_without_price_skipped() {
+        let data = serde_json::json!({
+            "lines": {
+                "data": [
+                    {"amount": 1000},
+                    {"amount": 500, "price": {"id": "price_pro"}}
+                ]
+            }
+        });
+        let plan = plan_from_invoice_lines_with_resolver(&data, test_resolver);
+        // Line without price is filtered out; only the price_pro line remains.
+        assert_eq!(plan, Some(Plan::Pro));
+    }
 }
