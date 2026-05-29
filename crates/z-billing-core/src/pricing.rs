@@ -57,6 +57,10 @@ impl Default for PricingConfig {
             opus_pricing.clone(),
         );
         llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-opus-4-8"),
+            opus_pricing.clone(),
+        );
+        llm_pricing.insert(
             ModelKey::new("anthropic", "claude-haiku-4-5-20251001"),
             haiku_pricing.clone(),
         );
@@ -66,6 +70,10 @@ impl Default for PricingConfig {
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-opus-4-7"),
+            opus_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "aura-claude-opus-4-8"),
             opus_pricing.clone(),
         );
         llm_pricing.insert(
