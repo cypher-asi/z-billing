@@ -536,6 +536,21 @@ mod tests {
             .contains_key(&ModelKey::new("anthropic", "claude-opus-4-6")));
         assert!(config
             .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "claude-opus-4-7")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "claude-opus-4-8")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "aura-claude-opus-4-6")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "aura-claude-opus-4-7")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "aura-claude-opus-4-8")));
+        assert!(config
+            .llm_pricing
             .contains_key(&ModelKey::new("openai", "aura-gpt-5-4")));
         assert!(config
             .llm_pricing
@@ -571,6 +586,37 @@ mod tests {
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("anthropic", "claude-3-5-sonnet")));
+    }
+
+    #[test]
+    fn opus_4_x_versions_share_identical_pricing() {
+        let config = PricingConfig::default();
+        let models = [
+            "claude-opus-4-6",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "aura-claude-opus-4-6",
+            "aura-claude-opus-4-7",
+            "aura-claude-opus-4-8",
+        ];
+
+        let baseline_cost =
+            config.calculate_llm_cost("anthropic", "claude-opus-4-6", 10_000, 5_000);
+        let baseline_reserve =
+            config.minimum_llm_reserve_cents("anthropic", "claude-opus-4-6");
+
+        for model in models {
+            assert_eq!(
+                config.calculate_llm_cost("anthropic", model, 10_000, 5_000),
+                baseline_cost,
+                "cost mismatch for {model}"
+            );
+            assert_eq!(
+                config.minimum_llm_reserve_cents("anthropic", model),
+                baseline_reserve,
+                "reserve mismatch for {model}"
+            );
+        }
     }
 
     #[test]
