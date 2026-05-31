@@ -201,7 +201,7 @@ impl Default for PricingConfig {
         );
         llm_pricing.insert(
             ModelKey::new("deepseek", "deepseek/deepseek-v4-pro"),
-            deepseek_v4_pro_pricing,
+            deepseek_v4_pro_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("deepseek", "aura-deepseek-v4-flash"),
@@ -221,6 +221,27 @@ impl Default for PricingConfig {
         );
         llm_pricing.insert(
             ModelKey::new("deepseek", "deepseek-reasoner"),
+            deepseek_v4_flash_pricing.clone(),
+        );
+
+        // DeepSeek V4 models are served via Fireworks, so aura-router reports
+        // their usage under the "fireworks" provider. Register the same base
+        // rates under that provider key so the standard 20% markup applies on
+        // the auto-compute path instead of falling back to default pricing.
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-deepseek-v4-pro"),
+            deepseek_v4_pro_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/deepseek-v4-pro"),
+            deepseek_v4_pro_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-deepseek-v4-flash"),
+            deepseek_v4_flash_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/deepseek-v4-flash"),
             deepseek_v4_flash_pricing,
         );
 
@@ -796,6 +817,40 @@ mod tests {
         // Unknown model uses default pricing
         let cost = config.calculate_llm_cost("unknown", "mystery-model", 1_000_000, 0);
         assert_eq!(cost, 100); // Default input: 100 credits/1M
+    }
+
+    #[test]
+    fn deepseek_via_fireworks_prices_same_as_direct_deepseek() {
+        let config = PricingConfig::default();
+
+        // DeepSeek now bills under the "fireworks" provider; the marked-up cost
+        // must equal the prior "deepseek"-provider cost (not the default 100/300
+        // fallback) so the routing change does not alter what users pay.
+        for model in ["aura-deepseek-v4-pro", "aura-deepseek-v4-flash"] {
+            let via_fireworks = config.calculate_llm_cost_for_zero_pro_user(
+                "fireworks",
+                model,
+                1_000_000,
+                1_000_000,
+                false,
+            );
+            let via_deepseek = config.calculate_llm_cost_for_zero_pro_user(
+                "deepseek",
+                model,
+                1_000_000,
+                1_000_000,
+                false,
+            );
+            let via_default = config.calculate_llm_cost_for_zero_pro_user(
+                "fireworks",
+                "some-unknown-model",
+                1_000_000,
+                1_000_000,
+                false,
+            );
+            assert_eq!(via_fireworks, via_deepseek, "cost parity for {model}");
+            assert_ne!(via_fireworks, via_default, "must not use default rates");
+        }
     }
 
     #[test]
