@@ -165,21 +165,73 @@ impl Default for PricingConfig {
             gpt_5_4_nano_pricing,
         );
 
-        // Google models at vendor/base rates
-        llm_pricing.insert(
-            ModelKey::new("google", "gemini-2.5-pro"),
-            LlmPricing {
-                input_credits_per_million: 125,
-                output_credits_per_million: 1000,
-            },
-        );
-        llm_pricing.insert(
-            ModelKey::new("google", "gemini-2.5-flash"),
-            LlmPricing {
-                input_credits_per_million: 30,
-                output_credits_per_million: 250,
-            },
-        );
+        // Google Gemini chat models at vendor/base rates (credits = USD/1M
+        // tokens x 100; 1 Z = $0.01). Pro tiers use the flat (<=200k prompt)
+        // rate. Each model is registered under both its branded `aura-gemini-*`
+        // alias (what aura-router sends) and the raw upstream model name (what
+        // the streaming path may report).
+        let gemini_pricing: [(&str, &str, LlmPricing); 7] = [
+            (
+                "aura-gemini-3-1-pro",
+                "gemini-3.1-pro-preview",
+                LlmPricing {
+                    input_credits_per_million: 200,
+                    output_credits_per_million: 1200,
+                },
+            ),
+            (
+                "aura-gemini-3-5-flash",
+                "gemini-3.5-flash",
+                LlmPricing {
+                    input_credits_per_million: 150,
+                    output_credits_per_million: 900,
+                },
+            ),
+            (
+                "aura-gemini-3-flash",
+                "gemini-3-flash-preview",
+                LlmPricing {
+                    input_credits_per_million: 50,
+                    output_credits_per_million: 300,
+                },
+            ),
+            (
+                "aura-gemini-3-1-flash-lite",
+                "gemini-3.1-flash-lite",
+                LlmPricing {
+                    input_credits_per_million: 25,
+                    output_credits_per_million: 150,
+                },
+            ),
+            (
+                "aura-gemini-2-5-pro",
+                "gemini-2.5-pro",
+                LlmPricing {
+                    input_credits_per_million: 125,
+                    output_credits_per_million: 1000,
+                },
+            ),
+            (
+                "aura-gemini-2-5-flash",
+                "gemini-2.5-flash",
+                LlmPricing {
+                    input_credits_per_million: 30,
+                    output_credits_per_million: 250,
+                },
+            ),
+            (
+                "aura-gemini-2-5-flash-lite",
+                "gemini-2.5-flash-lite",
+                LlmPricing {
+                    input_credits_per_million: 10,
+                    output_credits_per_million: 40,
+                },
+            ),
+        ];
+        for (alias, upstream, pricing) in gemini_pricing {
+            llm_pricing.insert(ModelKey::new("google", alias), pricing.clone());
+            llm_pricing.insert(ModelKey::new("google", upstream), pricing);
+        }
 
         // DeepSeek direct API models at cache-miss/base input rates. Callers can
         // send cost_cents when DeepSeek returns cache hit/miss token details.
@@ -724,6 +776,32 @@ mod tests {
         // 5,000 output tokens = 15 credits
         let cost = config.calculate_llm_cost("openai", "aura-gpt-5-5", 10_000, 5_000);
         assert_eq!(cost, 20);
+    }
+
+    #[test]
+    fn calculate_llm_cost_gemini_models() {
+        let config = PricingConfig::default();
+
+        // gemini-2.5-pro: 125 credits/1M input, 1000 credits/1M output.
+        // 1M input = 125 credits, 500k output = 500 credits => 625 total.
+        let pro_cost =
+            config.calculate_llm_cost("google", "aura-gemini-2-5-pro", 1_000_000, 500_000);
+        assert_eq!(pro_cost, 625);
+
+        // The branded alias and the raw upstream name resolve to the same rate.
+        let pro_cost_raw =
+            config.calculate_llm_cost("google", "gemini-2.5-pro", 1_000_000, 500_000);
+        assert_eq!(pro_cost_raw, pro_cost);
+
+        // gemini-3.1-pro (newest, most expensive tier): 200 in / 1200 out.
+        let gemini_3_pro_cost =
+            config.calculate_llm_cost("google", "aura-gemini-3-1-pro", 1_000_000, 500_000);
+        assert_eq!(gemini_3_pro_cost, 800);
+
+        // Flash-Lite 2.5 (cheapest tier): 10 in / 40 out.
+        let flash_lite_cost =
+            config.calculate_llm_cost("google", "gemini-2.5-flash-lite", 1_000_000, 500_000);
+        assert_eq!(flash_lite_cost, 30);
     }
 
     #[test]
