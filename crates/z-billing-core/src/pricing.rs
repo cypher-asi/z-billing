@@ -657,9 +657,126 @@ pub struct LlmPricing {
     pub output_credits_per_million: i64,
 }
 
+/// The company that *makes* a model (its research lab / vendor).
+///
+/// Deliberately distinct from the host provider used as the [`ModelKey`]
+/// `provider` (e.g. DeepSeek, Qwen, MiniMax and GLM are all billed under
+/// the `"fireworks"` host yet are made by four different companies). This
+/// lets usage be attributed to who built a model independently of where
+/// it is served.
+///
+/// The display strings returned by [`Maker::display_name`] are the
+/// canonical company labels and MUST stay in sync with aura-os
+/// `MODEL_VENDOR_LABELS` (`interface/src/constants/models.ts`) and the
+/// aura-router `Maker` enum. These three repos share no code, so the set
+/// is duplicated and kept aligned by hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Maker {
+    /// Anthropic (Claude).
+    Anthropic,
+    /// OpenAI (GPT, o-series, GPT-OSS).
+    OpenAi,
+    /// Google (Gemini, Gemma).
+    Google,
+    /// DeepSeek AI.
+    DeepSeek,
+    /// Moonshot AI (Kimi).
+    Moonshot,
+    /// MiniMax.
+    MiniMax,
+    /// Z.ai / Zhipu AI (GLM).
+    Zai,
+    /// Alibaba Cloud (Qwen / Tongyi).
+    Alibaba,
+}
+
+impl Maker {
+    /// Human-facing company name.
+    #[must_use]
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Maker::Anthropic => "Anthropic",
+            Maker::OpenAi => "OpenAI",
+            Maker::Google => "Google",
+            Maker::DeepSeek => "DeepSeek AI",
+            Maker::Moonshot => "Moonshot AI",
+            Maker::MiniMax => "MiniMax",
+            Maker::Zai => "Z.ai",
+            Maker::Alibaba => "Alibaba Cloud",
+        }
+    }
+}
+
+/// Resolve a model name to the company that makes it.
+///
+/// Accepts both Aura aliases (`aura-…`) and raw upstream names, including
+/// Fireworks-hosted `accounts/<org>/models/<name>` paths (whose host says
+/// nothing about who built the model). Returns `None` for unrecognized
+/// models.
+#[must_use]
+pub fn maker_for_model(model: &str) -> Option<Maker> {
+    // Reduce Fireworks-style "accounts/<org>/models/<name>" paths to the
+    // bare model name, then drop the Aura alias prefix, so the checks below
+    // match on the model family rather than the host or alias namespace.
+    let name = model.rsplit('/').next().unwrap_or(model);
+    let name = name.strip_prefix("aura-").unwrap_or(name);
+    let maker = if name.contains("claude") {
+        Maker::Anthropic
+    } else if name.starts_with("gpt")
+        || name.starts_with("o1")
+        || name.starts_with("o3")
+        || name.starts_with("o4")
+        || name.starts_with("codex")
+        || name.contains("oss")
+    {
+        Maker::OpenAi
+    } else if name.contains("gemini") || name.contains("gemma") {
+        Maker::Google
+    } else if name.contains("deepseek") {
+        Maker::DeepSeek
+    } else if name.contains("kimi") {
+        Maker::Moonshot
+    } else if name.contains("minimax") {
+        Maker::MiniMax
+    } else if name.contains("glm") {
+        Maker::Zai
+    } else if name.contains("qwen") {
+        Maker::Alibaba
+    } else {
+        return None;
+    };
+    Some(maker)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maker_for_model_attributes_models_to_their_company_not_their_host() {
+        // Fireworks-hosted models still map to their real maker even though
+        // they bill under the "fireworks" host provider.
+        let cases = [
+            ("aura-claude-opus-4-8", "Anthropic"),
+            ("aura-gpt-5-5", "OpenAI"),
+            ("accounts/fireworks/models/gpt-oss-120b", "OpenAI"),
+            ("aura-gemini-3-1-pro", "Google"),
+            ("accounts/fireworks/models/gemma-4-31b-it", "Google"),
+            ("aura-deepseek-v4-pro", "DeepSeek AI"),
+            ("accounts/fireworks/models/kimi-k2p6", "Moonshot AI"),
+            ("accounts/fireworks/models/minimax-m2p7", "MiniMax"),
+            ("accounts/fireworks/models/glm-5p1", "Z.ai"),
+            ("accounts/fireworks/models/qwen3p6-plus", "Alibaba Cloud"),
+        ];
+        for (model, expected) in cases {
+            assert_eq!(
+                maker_for_model(model).map(|m| m.display_name()),
+                Some(expected),
+                "maker for {model}"
+            );
+        }
+        assert_eq!(maker_for_model("totally-unknown-model"), None);
+    }
 
     #[test]
     fn default_pricing_config() {

@@ -37,5 +37,5 @@ pub use account::{
 pub use credits::{CreditTransaction, TransactionType};
 pub use error::{BillingError, Result};
 pub use ids::{AgentId, IdError, TransactionId, UserId};
-pub use pricing::{LlmPricing, ModelKey, PricingConfig};
+pub use pricing::{maker_for_model, LlmPricing, Maker, ModelKey, PricingConfig};
 pub use usage::{LlmProvider, TokenDirection, UsageEvent, UsageMetric, UsageSource};
