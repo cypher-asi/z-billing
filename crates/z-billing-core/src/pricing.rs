@@ -322,6 +322,70 @@ impl Default for PricingConfig {
             gpt_oss_120b_pricing,
         );
 
+        // Additional Fireworks-hosted open-weight models. Gemma variants are
+        // tier-priced by Fireworks (uniform input/output, no cached-input
+        // discount), so input and output rates match.
+        let minimax_m2_7_pricing = LlmPricing {
+            input_credits_per_million: 30,
+            output_credits_per_million: 120,
+        };
+        let glm_5_1_pricing = LlmPricing {
+            input_credits_per_million: 140,
+            output_credits_per_million: 440,
+        };
+        let qwen3_6_plus_pricing = LlmPricing {
+            input_credits_per_million: 50,
+            output_credits_per_million: 300,
+        };
+        let gemma_4_31b_pricing = LlmPricing {
+            input_credits_per_million: 90,
+            output_credits_per_million: 90,
+        };
+        let gemma_4_26b_a4b_pricing = LlmPricing {
+            input_credits_per_million: 50,
+            output_credits_per_million: 50,
+        };
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-minimax-m2-7"),
+            minimax_m2_7_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/minimax-m2p7"),
+            minimax_m2_7_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-glm-5-1"),
+            glm_5_1_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/glm-5p1"),
+            glm_5_1_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-qwen3-6-plus"),
+            qwen3_6_plus_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/qwen3p6-plus"),
+            qwen3_6_plus_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-gemma-4-31b"),
+            gemma_4_31b_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/gemma-4-31b-it"),
+            gemma_4_31b_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-gemma-4-26b-a4b"),
+            gemma_4_26b_a4b_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/gemma-4-26b-a4b-it"),
+            gemma_4_26b_a4b_pricing,
+        );
+
         Self {
             z_credit_rate_usd: 0.01,
             cpu_hour_credits: 6,       // $0.06 per CPU hour
@@ -735,6 +799,30 @@ mod tests {
 
             assert_eq!(aura_cost, fireworks_cost);
             assert_eq!(aura_cost, expected_cost);
+        }
+    }
+
+    #[test]
+    fn calculate_llm_cost_new_fireworks_models() {
+        let config = PricingConfig::default();
+
+        for (aura_model, fireworks_model, expected_cost) in [
+            ("aura-minimax-m2-7", "accounts/fireworks/models/minimax-m2p7", 90),
+            ("aura-glm-5-1", "accounts/fireworks/models/glm-5p1", 360),
+            ("aura-qwen3-6-plus", "accounts/fireworks/models/qwen3p6-plus", 200),
+            ("aura-gemma-4-31b", "accounts/fireworks/models/gemma-4-31b-it", 135),
+            (
+                "aura-gemma-4-26b-a4b",
+                "accounts/fireworks/models/gemma-4-26b-a4b-it",
+                75,
+            ),
+        ] {
+            let aura_cost = config.calculate_llm_cost("fireworks", aura_model, 1_000_000, 500_000);
+            let fireworks_cost =
+                config.calculate_llm_cost("fireworks", fireworks_model, 1_000_000, 500_000);
+
+            assert_eq!(aura_cost, fireworks_cost, "parity for {aura_model}");
+            assert_eq!(aura_cost, expected_cost, "cost for {aura_model}");
         }
     }
 
