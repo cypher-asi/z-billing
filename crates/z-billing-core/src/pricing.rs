@@ -377,6 +377,10 @@ impl Default for PricingConfig {
         // Additional Fireworks-hosted open-weight models. Gemma variants are
         // tier-priced by Fireworks (uniform input/output, no cached-input
         // discount), so input and output rates match.
+        let minimax_m3_pricing = LlmPricing {
+            input_credits_per_million: 40,
+            output_credits_per_million: 160,
+        };
         let minimax_m2_7_pricing = LlmPricing {
             input_credits_per_million: 30,
             output_credits_per_million: 120,
@@ -397,6 +401,14 @@ impl Default for PricingConfig {
             input_credits_per_million: 50,
             output_credits_per_million: 50,
         };
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-minimax-m3"),
+            minimax_m3_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/minimax-m3"),
+            minimax_m3_pricing,
+        );
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-minimax-m2-7"),
             minimax_m2_7_pricing.clone(),
@@ -764,6 +776,7 @@ mod tests {
             ("accounts/fireworks/models/gemma-4-31b-it", "Google"),
             ("aura-deepseek-v4-pro", "DeepSeek AI"),
             ("accounts/fireworks/models/kimi-k2p6", "Moonshot AI"),
+            ("accounts/fireworks/models/minimax-m3", "MiniMax"),
             ("accounts/fireworks/models/minimax-m2p7", "MiniMax"),
             ("accounts/fireworks/models/glm-5p1", "Z.ai"),
             ("accounts/fireworks/models/qwen3p6-plus", "Alibaba Cloud"),
@@ -1002,6 +1015,7 @@ mod tests {
         let config = PricingConfig::default();
 
         for (aura_model, fireworks_model, expected_cost) in [
+            ("aura-minimax-m3", "accounts/fireworks/models/minimax-m3", 120),
             ("aura-minimax-m2-7", "accounts/fireworks/models/minimax-m2p7", 90),
             ("aura-glm-5-1", "accounts/fireworks/models/glm-5p1", 360),
             ("aura-qwen3-6-plus", "accounts/fireworks/models/qwen3p6-plus", 200),
