@@ -6,8 +6,8 @@ use std::time::Duration;
 use crate::error::ClientError;
 use crate::types::{
     ApiErrorResponse, BalanceResponse, BatchUsageRequest, BatchUsageResponse, CheckBalanceRequest,
-    CheckBalanceResponse, ComputeUsageEvent, LlmUsageEvent, UsageMetric, UsageRequest,
-    UsageResponse,
+    CheckBalanceResponse, ComputeUsageEvent, LlmUsageEvent, UsageMetric, UsageQuoteRequest,
+    UsageQuoteResponse, UsageRequest, UsageResponse,
 };
 
 /// Z-Billing API client.
@@ -132,6 +132,54 @@ impl ZBillingClient {
             .await?;
 
         self.handle_response(response).await
+    }
+
+    /// Quote generic usage without deducting credits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or the server returns an error.
+    pub async fn quote_usage(
+        &self,
+        request: UsageQuoteRequest,
+    ) -> Result<UsageQuoteResponse, ClientError> {
+        let url = format!("{}/v1/usage/quote", self.base_url);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("x-service-name", &self.service_name)
+            .json(&request)
+            .send()
+            .await?;
+
+        self.handle_response(response).await
+    }
+
+    /// Quote LLM token usage without deducting credits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or the server returns an error.
+    pub async fn quote_llm_usage(
+        &self,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+        input_tokens: u64,
+        output_tokens: u64,
+        zero_pro_user: bool,
+    ) -> Result<UsageQuoteResponse, ClientError> {
+        self.quote_usage(UsageQuoteRequest {
+            metric: UsageMetric::LlmTokens {
+                provider: provider.into(),
+                model: model.into(),
+                input_tokens,
+                output_tokens,
+            },
+            zero_pro_user: Some(zero_pro_user),
+        })
+        .await
     }
 
     /// Report multiple usage events in a batch.

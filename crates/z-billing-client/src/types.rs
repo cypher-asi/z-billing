@@ -108,6 +108,25 @@ pub struct UsageResponse {
     pub transaction_id: String,
 }
 
+/// Usage quote request.
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageQuoteRequest {
+    /// Usage metric details.
+    pub metric: UsageMetric,
+    /// Whether the user has a ZERO Pro entitlement for LLM markup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zero_pro_user: Option<bool>,
+}
+
+/// Usage quote response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UsageQuoteResponse {
+    /// Calculated cost in cents/credits.
+    pub cost_cents: i64,
+    /// Currency marker for the integer cost.
+    pub currency: String,
+}
+
 /// Batch usage request.
 #[derive(Debug, Clone, Serialize)]
 pub struct BatchUsageRequest {
