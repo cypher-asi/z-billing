@@ -38,6 +38,10 @@ impl Default for PricingConfig {
             input_credits_per_million: 500,   // $5.00 per 1M
             output_credits_per_million: 2500, // $25.00 per 1M
         };
+        let fable_pricing = LlmPricing {
+            input_credits_per_million: 1000,  // $10.00 per 1M
+            output_credits_per_million: 5000, // $50.00 per 1M
+        };
         let haiku_pricing = LlmPricing {
             input_credits_per_million: 100,  // $1.00 per 1M
             output_credits_per_million: 500, // $5.00 per 1M
@@ -47,6 +51,14 @@ impl Default for PricingConfig {
         llm_pricing.insert(
             ModelKey::new("anthropic", "claude-sonnet-4-6"),
             sonnet_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-fable-5"),
+            fable_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "aura-claude-fable-5"),
+            fable_pricing,
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "claude-opus-4-6"),
@@ -800,6 +812,12 @@ mod tests {
             .contains_key(&ModelKey::new("anthropic", "claude-sonnet-4-6")));
         assert!(config
             .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "claude-fable-5")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "aura-claude-fable-5")));
+        assert!(config
+            .llm_pricing
             .contains_key(&ModelKey::new("anthropic", "claude-opus-4-6")));
         assert!(config
             .llm_pricing
@@ -884,6 +902,17 @@ mod tests {
                 "reserve mismatch for {model}"
             );
         }
+    }
+
+    #[test]
+    fn calculate_llm_cost_claude_fable_5() {
+        let config = PricingConfig::default();
+
+        // Claude Fable 5: 1000 credits/1M input, 5000 credits/1M output
+        // 10,000 input tokens = 10 credits
+        // 5,000 output tokens = 25 credits
+        let cost = config.calculate_llm_cost("anthropic", "aura-claude-fable-5", 10_000, 5_000);
+        assert_eq!(cost, 35);
     }
 
     #[test]
