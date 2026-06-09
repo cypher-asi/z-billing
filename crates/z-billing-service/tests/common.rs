@@ -57,6 +57,9 @@ impl TestHarness {
             max_body_bytes: 1024 * 1024,
             request_timeout_seconds: 30,
             pricing: z_billing_core::PricingConfig::default(),
+            zos_api_url: None,
+            zos_api_internal_token: None,
+            mixpanel_token: None,
         };
 
         let state = AppState::new(store.clone(), config);

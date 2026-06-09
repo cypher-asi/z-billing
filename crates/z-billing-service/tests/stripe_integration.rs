@@ -82,9 +82,11 @@ fn create_stripe_test_harness() -> Option<(TestServer, TempDir, UserId, String)>
 
     let app_config = ServiceConfig {
         listen_addr: "127.0.0.1:0".into(),
+        database_url: None,
         data_dir: temp_dir.path().to_string_lossy().to_string(),
         auth_base_url: "http://localhost".into(),
         auth_audience: "z-billing".into(),
+        auth_cookie_secret: None,
         service_api_key: Some(service_api_key.clone()),
         admin_api_key: Some("test-admin-key".to_string()),
         lago_api_url: None,
@@ -98,6 +100,9 @@ fn create_stripe_test_harness() -> Option<(TestServer, TempDir, UserId, String)>
         max_body_bytes: 1024 * 1024,
         request_timeout_seconds: 30,
         pricing: z_billing_core::PricingConfig::default(),
+        zos_api_url: None,
+        zos_api_internal_token: None,
+        mixpanel_token: None,
     };
 
     let state = AppState::new(Arc::new(store), app_config);

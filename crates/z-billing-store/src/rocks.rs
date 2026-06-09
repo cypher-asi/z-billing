@@ -369,7 +369,7 @@ impl Store for RocksStore {
 
     fn record_webhook_event(&self, event_id: &str, source: &str) -> Result<()> {
         let key = format!("webhook:{event_id}");
-        let cf = self.cf_handle(schema::CF_USAGE_EVENTS)?;
+        let cf = self.cf(cf::USAGE_EVENTS)?;
         let value = serde_json::json!({
             "source": source,
             "recorded_at": chrono::Utc::now().to_rfc3339()

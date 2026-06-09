@@ -13,7 +13,9 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::handlers::{accounts, checkout_pages, credits, health, subscriptions, usage, webhooks, ws};
+use crate::handlers::{
+    accounts, checkout_pages, credits, health, subscriptions, usage, webhooks, ws,
+};
 use crate::state::AppState;
 
 // ============================================================================
@@ -47,6 +49,7 @@ const API_MAX_CONCURRENT_REQUESTS: usize = 50;
 /// ## Usage (Service API Key auth, rate-limited)
 /// - `POST /v1/usage` - Report usage event
 /// - `POST /v1/usage/batch` - Report multiple usage events
+/// - `POST /v1/usage/quote` - Quote usage cost without debiting an account
 ///
 /// ## Webhooks (Signature verification)
 /// - `POST /webhooks/stripe` - Stripe webhooks
@@ -68,6 +71,7 @@ pub fn create_router(state: AppState) -> Router {
     let usage_routes = Router::new()
         .route("/", post(usage::report_usage))
         .route("/batch", post(usage::report_usage_batch))
+        .route("/quote", post(usage::quote_usage))
         .route("/check", post(usage::check_balance))
         .layer(ConcurrencyLimitLayer::new(USAGE_MAX_CONCURRENT_REQUESTS));
 

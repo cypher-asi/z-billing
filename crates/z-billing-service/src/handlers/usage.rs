@@ -122,6 +122,54 @@ pub struct UsageResponse {
     pub transaction_id: String,
 }
 
+/// Usage quote request from services.
+#[derive(Debug, Deserialize)]
+pub struct UsageQuoteRequest {
+    /// Usage metric details.
+    pub metric: UsageMetricRequest,
+    /// Whether the user has a ZERO Pro entitlement. This is separate from
+    /// z-billing subscription plans and controls LLM markup.
+    #[serde(
+        default,
+        alias = "zeroProUser",
+        alias = "is_zero_pro",
+        alias = "isZeroPro"
+    )]
+    pub zero_pro_user: Option<bool>,
+}
+
+/// Usage quote response.
+#[derive(Debug, Serialize)]
+pub struct UsageQuoteResponse {
+    /// Calculated cost in cents/credits.
+    pub cost_cents: i64,
+    /// ISO-style currency marker for the integer cost.
+    pub currency: &'static str,
+}
+
+/// Calculate the cost for a usage event without mutating account state.
+pub async fn quote_usage(
+    State(state): State<Arc<AppState>>,
+    auth: ServiceAuth,
+    Json(body): Json<UsageQuoteRequest>,
+) -> Result<Json<UsageQuoteResponse>, ApiError> {
+    tracing::debug!(
+        service = %auth.service_name,
+        "Quoting usage event"
+    );
+
+    let cost_cents = calculate_cost(
+        &state.config.pricing,
+        body.zero_pro_user.unwrap_or(false),
+        &body.metric,
+    );
+
+    Ok(Json(UsageQuoteResponse {
+        cost_cents,
+        currency: "USD_CENTS",
+    }))
+}
+
 /// Report a single usage event.
 pub async fn report_usage(
     State(state): State<Arc<AppState>>,
@@ -201,7 +249,13 @@ pub async fn report_usage(
             "balance_after": balance,
             "service": auth.service_name,
         });
-        if let UsageMetricRequest::LlmTokens { ref provider, ref model, input_tokens, output_tokens } = body.metric {
+        if let UsageMetricRequest::LlmTokens {
+            ref provider,
+            ref model,
+            input_tokens,
+            output_tokens,
+        } = body.metric
+        {
             props["provider"] = serde_json::json!(provider);
             props["model"] = serde_json::json!(model);
             props["input_tokens"] = serde_json::json!(input_tokens);

@@ -50,6 +50,7 @@ fn set_plan(harness: &TestHarness, plan: Plan) {
         current_period_start: now,
         current_period_end: now + chrono::Duration::days(30),
         lago_subscription_id: "test-subscription".to_string(),
+        stripe_subscription_id: None,
         created_at: now,
     });
     harness
@@ -458,4 +459,35 @@ async fn check_balance_insufficient() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["sufficient"], false);
     assert_eq!(body["balance_cents"], 500);
+}
+
+#[tokio::test]
+async fn quote_usage_calculates_llm_cost_without_account_mutation() {
+    let harness = TestHarness::new();
+
+    let response = harness
+        .server
+        .post("/v1/usage/quote")
+        .add_header("x-api-key", &harness.service_api_key)
+        .add_header("x-service-name", "aura-os-server")
+        .json(&json!({
+            "metric": {
+                "type": "llm_tokens",
+                "provider": "openai",
+                "model": "aura-gpt-5-4",
+                "input_tokens": 1_000_000,
+                "output_tokens": 1_000_000
+            }
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["cost_cents"], 2_100);
+    assert_eq!(body["currency"], "USD_CENTS");
+    assert!(harness
+        .store
+        .get_account(&harness.test_user_id)
+        .unwrap()
+        .is_none());
 }
