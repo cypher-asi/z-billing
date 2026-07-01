@@ -668,6 +668,25 @@ pub fn try_daily_grant(
     Ok(Some(balance))
 }
 
+/// Whether the lazy monthly backstop must skip because the current billing
+/// period has already received a monthly allowance.
+///
+/// The 30-day timer in [`try_monthly_allowance`] can elapse before a billing
+/// cycle longer than 30 days rolls over. Without this guard an active user
+/// could receive the monthly allowance twice for the same period: once from
+/// this backstop just before renewal and again from the renewal's `invoice.paid`.
+///
+/// Only applies while the stored period is still open (`period_end > now`). Once
+/// the period has ended — a renewal we have not processed yet — the backstop is
+/// allowed to fire so a genuinely dropped renewal is still covered.
+fn period_already_granted(
+    now: chrono::DateTime<chrono::Utc>,
+    period_end: chrono::DateTime<chrono::Utc>,
+    granted_in_period_cents: i64,
+) -> bool {
+    period_end > now && granted_in_period_cents > 0
+}
+
 /// Check if the account is eligible for a monthly credit allowance and issue it if so.
 ///
 /// Returns the new balance if a grant was issued, or None if not eligible.
@@ -696,6 +715,19 @@ pub fn try_monthly_allowance(
     let amount = plan.monthly_credits();
     if amount <= 0 {
         return Ok(None);
+    }
+
+    // Guard against a second grant within the same billing period. The 30-day
+    // check above can pass while a >30-day billing cycle has not yet rolled
+    // over, in which case the renewal's invoice.paid would grant again for the
+    // same period. This query only runs on the rare path (>30 days since the
+    // last grant), so the hot path is unaffected.
+    if let Some(sub) = account.subscription.as_ref() {
+        let granted =
+            store.sum_monthly_allowance_since(&account.user_id, sub.current_period_start)?;
+        if period_already_granted(now, sub.current_period_end, granted) {
+            return Ok(None);
+        }
     }
 
     let user_id = account.user_id;
@@ -988,5 +1020,145 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap();
         std::env::remove_var("REFERRAL_GRANT_CREDITS");
         assert_eq!(referral_grant_amount(), 5000);
+    }
+
+    // ----- period_already_granted (monthly double-grant guard) -----
+
+    fn ts(secs: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::from_timestamp(secs, 0).expect("valid timestamp")
+    }
+
+    #[test]
+    fn period_already_granted_open_period_with_grant_skips() {
+        // Current period still open and already granted this period → skip.
+        // This is the bug fix: the backstop must not re-grant a period that
+        // invoice.paid (or an earlier backstop) has already covered.
+        let now = ts(1_000_000);
+        let period_end = ts(1_100_000); // after now → period still open
+        assert!(period_already_granted(now, period_end, 12_000));
+    }
+
+    #[test]
+    fn period_already_granted_open_period_no_grant_allows() {
+        // Open period with no allowance yet → allow (backstop for a dropped invoice).
+        let now = ts(1_000_000);
+        let period_end = ts(1_100_000);
+        assert!(!period_already_granted(now, period_end, 0));
+    }
+
+    #[test]
+    fn period_already_granted_ended_period_allows_backstop() {
+        // Period already ended (a renewal we have not processed yet) → allow,
+        // even if the ended period had a grant, so a genuinely dropped renewal
+        // is still covered by the backstop.
+        let now = ts(1_000_000);
+        let period_end = ts(900_000); // before now → period ended
+        assert!(!period_already_granted(now, period_end, 12_000));
+        assert!(!period_already_granted(now, period_end, 0));
+    }
+
+    #[test]
+    fn period_already_granted_boundary_end_equals_now_allows() {
+        // end == now is treated as ended (not strictly greater than now) → allow.
+        let now = ts(1_000_000);
+        assert!(!period_already_granted(now, now, 12_000));
+    }
+
+    // ----- try_monthly_allowance end-to-end (store-backed) -----
+    // Reproduces the exact double-grant scenario against a real store.
+    // Gated on the rocksdb-backend feature (run: cargo test -p z-billing-service
+    // --features rocksdb-backend).
+
+    #[cfg(feature = "rocksdb-backend")]
+    fn crusader_account_open_period(
+        now: chrono::DateTime<chrono::Utc>,
+        period_end: chrono::DateTime<chrono::Utc>,
+    ) -> z_billing_core::Account {
+        use z_billing_core::{Account, Subscription, SubscriptionStatus, UserId};
+        let mut account = Account::new(UserId::generate());
+        account.signup_grant_at = Some(now - chrono::Duration::days(60));
+        // 31 days since last grant → the 30-day timer has elapsed (bug precondition).
+        account.last_monthly_grant_at = Some(now - chrono::Duration::days(31));
+        account.subscription = Some(Subscription {
+            plan: Plan::Crusader,
+            status: SubscriptionStatus::Active,
+            current_period_start: now - chrono::Duration::days(31),
+            current_period_end: period_end,
+            lago_subscription_id: String::new(),
+            stripe_subscription_id: Some("sub_test".to_string()),
+            created_at: now - chrono::Duration::days(90),
+        });
+        account
+    }
+
+    #[cfg(feature = "rocksdb-backend")]
+    #[test]
+    fn try_monthly_allowance_skips_when_open_period_already_granted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = z_billing_store::RocksStore::open(dir.path()).unwrap();
+        let (tx, _rx) = tokio::sync::broadcast::channel::<String>(16);
+        let now = chrono::Utc::now();
+
+        // Period still OPEN (ends in 5 days) and already granted this period.
+        let account = crusader_account_open_period(now, now + chrono::Duration::days(5));
+        let user_id = account.user_id;
+        store.put_account(&account).unwrap();
+        store
+            .add_credits(
+                &user_id,
+                12_000,
+                &CreditTransaction::monthly_allowance(user_id, 12_000, 12_000),
+            )
+            .unwrap();
+
+        let account = store.get_account(&user_id).unwrap().unwrap();
+        let before = account.balance_cents;
+        let result = try_monthly_allowance(&store, &tx, &account).unwrap();
+
+        assert_eq!(
+            result, None,
+            "must not re-grant an already-granted open period"
+        );
+        assert_eq!(
+            store.get_account(&user_id).unwrap().unwrap().balance_cents,
+            before,
+            "balance must be unchanged",
+        );
+    }
+
+    #[cfg(feature = "rocksdb-backend")]
+    #[test]
+    fn try_monthly_allowance_grants_backstop_when_period_ended() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = z_billing_store::RocksStore::open(dir.path()).unwrap();
+        let (tx, _rx) = tokio::sync::broadcast::channel::<String>(16);
+        let now = chrono::Utc::now();
+
+        // Period ENDED (renewal not processed) — the genuine dropped-invoice case.
+        // Even a grant recorded against the ended period must not block the backstop.
+        let account = crusader_account_open_period(now, now - chrono::Duration::days(1));
+        let user_id = account.user_id;
+        store.put_account(&account).unwrap();
+        store
+            .add_credits(
+                &user_id,
+                12_000,
+                &CreditTransaction::monthly_allowance(user_id, 12_000, 12_000),
+            )
+            .unwrap();
+
+        let account = store.get_account(&user_id).unwrap().unwrap();
+        let before = account.balance_cents;
+        let result = try_monthly_allowance(&store, &tx, &account).unwrap();
+
+        assert_eq!(
+            result,
+            Some(before + 12_000),
+            "backstop must still cover a dropped renewal"
+        );
+        assert_eq!(
+            store.get_account(&user_id).unwrap().unwrap().balance_cents,
+            before + 12_000,
+        );
     }
 }
