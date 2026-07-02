@@ -4,6 +4,7 @@ mod common;
 
 use common::TestHarness;
 use serde_json::json;
+use z_billing_store::Store;
 
 // ============================================================================
 // Account Creation
@@ -90,19 +91,6 @@ async fn get_account_success() {
 }
 
 #[tokio::test]
-async fn get_nonexistent_account_fails() {
-    let harness = TestHarness::new();
-
-    let response = harness
-        .server
-        .get("/v1/accounts/me")
-        .add_header("authorization", harness.user_auth_header())
-        .await;
-
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
 async fn get_account_without_auth_fails() {
     let harness = TestHarness::new();
 
@@ -137,14 +125,13 @@ async fn delete_account_success() {
 
     response.assert_status_ok();
 
-    // Verify account is gone
-    let response = harness
-        .server
-        .get("/v1/accounts/me")
-        .add_header("authorization", harness.user_auth_header())
-        .await;
-
-    response.assert_status_not_found();
+    // Verify account is gone without hitting GET /v1/accounts/me, which
+    // auto-creates accounts on first access.
+    let account = harness
+        .store
+        .get_account(&harness.test_user_id)
+        .expect("store read should succeed");
+    assert!(account.is_none());
 }
 
 #[tokio::test]
