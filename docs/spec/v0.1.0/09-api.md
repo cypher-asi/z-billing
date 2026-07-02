@@ -94,7 +94,8 @@ Create a new billing account for the authenticated user.
 
 ### GET /v1/accounts/me
 
-Get the current user's account.
+Get the current user's account. If the authenticated user does not have a
+billing account yet, the service creates one with a zero balance and returns it.
 
 **Response:**
 ```json
@@ -110,9 +111,6 @@ Get the current user's account.
   "created_at": "2024-06-15T10:30:00Z"
 }
 ```
-
-**Errors:**
-- `404 Not Found`: Account not found
 
 ### DELETE /v1/accounts/me
 
