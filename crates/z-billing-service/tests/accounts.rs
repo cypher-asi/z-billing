@@ -91,6 +91,28 @@ async fn get_account_success() {
 }
 
 #[tokio::test]
+async fn get_missing_account_auto_creates_zero_balance_account() {
+    let harness = TestHarness::new();
+
+    let response = harness
+        .server
+        .get("/v1/accounts/me")
+        .add_header("authorization", harness.user_auth_header())
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["user_id"], harness.test_user_id.to_string());
+    assert_eq!(body["balance_cents"], 0);
+
+    let account = harness
+        .store
+        .get_account(&harness.test_user_id)
+        .expect("store read should succeed");
+    assert!(account.is_some());
+}
+
+#[tokio::test]
 async fn get_account_without_auth_fails() {
     let harness = TestHarness::new();
 
