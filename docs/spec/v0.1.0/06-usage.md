@@ -169,6 +169,7 @@ pub enum LlmProvider {
     Anthropic,        // Claude models
     OpenAi,           // GPT models
     Google,           // Gemini models
+    Xai,              // Grok models
     Custom(String),   // Other providers
 }
 ```
@@ -178,6 +179,7 @@ pub enum LlmProvider {
 | `Anthropic`          | `"anthropic"`  |
 | `OpenAi`             | `"openai"`     |
 | `Google`             | `"google"`     |
+| `Xai`                | `"xai"`        |
 | `Custom("mistral")`  | `"mistral"`    |
 
 ## TokenDirection

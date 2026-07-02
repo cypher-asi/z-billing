@@ -4,7 +4,7 @@ mod common;
 
 use common::TestHarness;
 use serde_json::json;
-use z_billing_core::{Plan, Subscription, SubscriptionStatus};
+use z_billing_core::{LlmProvider, Plan, Subscription, SubscriptionStatus, UsageMetric};
 use z_billing_store::Store;
 
 // ============================================================================
@@ -94,7 +94,7 @@ async fn report_llm_usage_success() {
 }
 
 #[tokio::test]
-async fn report_llm_usage_applies_zero_pro_markup_discount() {
+async fn report_llm_usage_applies_standard_markup_for_zero_pro_entitlement() {
     let harness = TestHarness::new();
     create_funded_account(&harness, 10000).await;
 
@@ -119,8 +119,8 @@ async fn report_llm_usage_applies_zero_pro_markup_discount() {
 
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert_eq!(body["cost_cents"], 11);
-    assert_eq!(body["balance_cents"], 9989);
+    assert_eq!(body["cost_cents"], 12);
+    assert_eq!(body["balance_cents"], 9988);
 }
 
 #[tokio::test]
@@ -182,8 +182,54 @@ async fn report_llm_usage_reads_zero_pro_from_metadata_alias() {
 
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert_eq!(body["cost_cents"], 11);
-    assert_eq!(body["balance_cents"], 9989);
+    assert_eq!(body["cost_cents"], 12);
+    assert_eq!(body["balance_cents"], 9988);
+}
+
+#[tokio::test]
+async fn report_xai_llm_usage_uses_grok_rates_and_provider() {
+    let harness = TestHarness::new();
+    create_funded_account(&harness, 10000).await;
+
+    let response = harness
+        .server
+        .post("/v1/usage")
+        .add_header("x-api-key", &harness.service_api_key)
+        .add_header("x-service-name", "aura-router")
+        .json(&json!({
+            "event_id": "evt_test_xai_grok",
+            "user_id": harness.test_user_id.to_string(),
+            "metric": {
+                "type": "llm_tokens",
+                "provider": "xai",
+                "model": "aura-grok-4-3",
+                "input_tokens": 1_000_000,
+                "output_tokens": 500_000
+            }
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    // Base xAI cost: 125 input + 125 output = 250 cents. Existing z-billing
+    // LLM markup adds 20%, so the direct calculated charge is 300 cents.
+    assert_eq!(body["cost_cents"], 300);
+    assert_eq!(body["balance_cents"], 9700);
+
+    let event = harness
+        .store
+        .get_usage_event("evt_test_xai_grok")
+        .expect("load usage event")
+        .expect("usage event recorded");
+    match event.metric {
+        UsageMetric::LlmTokens {
+            provider, model, ..
+        } => {
+            assert_eq!(provider, LlmProvider::Xai);
+            assert_eq!(model, "aura-grok-4-3");
+        }
+        other => panic!("expected LLM usage metric, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -484,6 +530,39 @@ async fn quote_usage_calculates_llm_cost_without_account_mutation() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["cost_cents"], 2_100);
+    assert_eq!(body["currency"], "USD_CENTS");
+    assert!(harness
+        .store
+        .get_account(&harness.test_user_id)
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn quote_usage_calculates_xai_grok_build_cost() {
+    let harness = TestHarness::new();
+
+    let response = harness
+        .server
+        .post("/v1/usage/quote")
+        .add_header("x-api-key", &harness.service_api_key)
+        .add_header("x-service-name", "aura-os-server")
+        .json(&json!({
+            "metric": {
+                "type": "llm_tokens",
+                "provider": "xai",
+                "model": "xai/grok-build-0.1",
+                "input_tokens": 1_000_000,
+                "output_tokens": 500_000
+            }
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    // Base xAI cost: 100 input + 100 output = 200 cents. Existing z-billing
+    // LLM markup adds 20%, so the quoted charge is 240 cents.
+    assert_eq!(body["cost_cents"], 240);
     assert_eq!(body["currency"], "USD_CENTS");
     assert!(harness
         .store

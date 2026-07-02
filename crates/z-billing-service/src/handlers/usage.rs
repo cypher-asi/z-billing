@@ -705,6 +705,7 @@ fn convert_metric(req: &UsageMetricRequest) -> (UsageMetric, f64) {
                 "anthropic" => LlmProvider::Anthropic,
                 "openai" => LlmProvider::OpenAi,
                 "google" => LlmProvider::Google,
+                "xai" => LlmProvider::Xai,
                 other => LlmProvider::Custom(other.to_string()),
             };
 

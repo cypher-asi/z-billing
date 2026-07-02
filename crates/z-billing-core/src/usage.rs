@@ -187,6 +187,9 @@ pub enum LlmProvider {
     /// Google (Gemini models).
     Google,
 
+    /// xAI (Grok models).
+    Xai,
+
     /// Custom provider.
     Custom(String),
 }
@@ -199,6 +202,7 @@ impl LlmProvider {
             Self::Anthropic => "anthropic",
             Self::OpenAi => "openai",
             Self::Google => "google",
+            Self::Xai => "xai",
             Self::Custom(name) => name,
         }
     }
@@ -258,5 +262,10 @@ mod tests {
             UsageSource::Custom("my-service".into()).as_str(),
             "my-service"
         );
+    }
+
+    #[test]
+    fn llm_provider_as_str_includes_xai() {
+        assert_eq!(LlmProvider::Xai.as_str(), "xai");
     }
 }

@@ -177,6 +177,28 @@ impl Default for PricingConfig {
             gpt_5_4_nano_pricing,
         );
 
+        // xAI Grok chat models at vendor/base rates. Cache-aware usage can be
+        // reported with precomputed cost_cents by aura-router; these base rates
+        // cover quotes, reserves, and fallback usage calculation.
+        let grok_4_3_pricing = LlmPricing {
+            input_credits_per_million: 125,
+            output_credits_per_million: 250,
+        };
+        let grok_build_0_1_pricing = LlmPricing {
+            input_credits_per_million: 100,
+            output_credits_per_million: 200,
+        };
+        for model in ["aura-grok-4-3", "grok-4.3", "xai/grok-4.3"] {
+            llm_pricing.insert(ModelKey::new("xai", model), grok_4_3_pricing.clone());
+        }
+        for model in [
+            "aura-grok-build-0-1",
+            "grok-build-0.1",
+            "xai/grok-build-0.1",
+        ] {
+            llm_pricing.insert(ModelKey::new("xai", model), grok_build_0_1_pricing.clone());
+        }
+
         // Google Gemini chat models at vendor/base rates (credits = USD/1M
         // tokens x 100; 1 Z = $0.01). Pro tiers use the flat (<=200k prompt)
         // rate. Each model is registered under both its branded `aura-gemini-*`
@@ -702,6 +724,8 @@ pub enum Maker {
     OpenAi,
     /// Google (Gemini, Gemma).
     Google,
+    /// xAI (Grok).
+    Xai,
     /// DeepSeek AI.
     DeepSeek,
     /// Moonshot AI (Kimi).
@@ -722,6 +746,7 @@ impl Maker {
             Maker::Anthropic => "Anthropic",
             Maker::OpenAi => "OpenAI",
             Maker::Google => "Google",
+            Maker::Xai => "xAI",
             Maker::DeepSeek => "DeepSeek AI",
             Maker::Moonshot => "Moonshot AI",
             Maker::MiniMax => "MiniMax",
@@ -756,6 +781,8 @@ pub fn maker_for_model(model: &str) -> Option<Maker> {
         Maker::OpenAi
     } else if name.contains("gemini") || name.contains("gemma") {
         Maker::Google
+    } else if name.contains("grok") {
+        Maker::Xai
     } else if name.contains("deepseek") {
         Maker::DeepSeek
     } else if name.contains("kimi") {
@@ -786,6 +813,8 @@ mod tests {
             ("accounts/fireworks/models/gpt-oss-120b", "OpenAI"),
             ("aura-gemini-3-1-pro", "Google"),
             ("accounts/fireworks/models/gemma-4-31b-it", "Google"),
+            ("aura-grok-4-3", "xAI"),
+            ("xai/grok-build-0.1", "xAI"),
             ("aura-deepseek-v4-pro", "DeepSeek AI"),
             ("accounts/fireworks/models/kimi-k2p6", "Moonshot AI"),
             ("accounts/fireworks/models/minimax-m3", "MiniMax"),
@@ -842,6 +871,18 @@ mod tests {
             .contains_key(&ModelKey::new("openai", "aura-gpt-5-5")));
         assert!(config
             .llm_pricing
+            .contains_key(&ModelKey::new("xai", "aura-grok-4-3")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("xai", "grok-4.3")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("xai", "aura-grok-build-0-1")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("xai", "xai/grok-build-0.1")));
+        assert!(config
+            .llm_pricing
             .contains_key(&ModelKey::new("deepseek", "aura-deepseek-v4-pro")));
         assert!(config
             .llm_pricing
@@ -887,8 +928,7 @@ mod tests {
 
         let baseline_cost =
             config.calculate_llm_cost("anthropic", "claude-opus-4-6", 10_000, 5_000);
-        let baseline_reserve =
-            config.minimum_llm_reserve_cents("anthropic", "claude-opus-4-6");
+        let baseline_reserve = config.minimum_llm_reserve_cents("anthropic", "claude-opus-4-6");
 
         for model in models {
             assert_eq!(
@@ -935,6 +975,34 @@ mod tests {
         // 5,000 output tokens = 15 credits
         let cost = config.calculate_llm_cost("openai", "aura-gpt-5-5", 10_000, 5_000);
         assert_eq!(cost, 20);
+    }
+
+    #[test]
+    fn calculate_llm_cost_xai_grok_models() {
+        let config = PricingConfig::default();
+
+        // Grok 4.3: $1.25/M input, $2.50/M output.
+        let grok_4_3_cost = config.calculate_llm_cost("xai", "aura-grok-4-3", 1_000_000, 500_000);
+        assert_eq!(grok_4_3_cost, 250);
+
+        // Raw upstream and xai-prefixed forms must resolve to the same rates.
+        assert_eq!(
+            config.calculate_llm_cost("xai", "grok-4.3", 1_000_000, 500_000),
+            grok_4_3_cost
+        );
+        assert_eq!(
+            config.calculate_llm_cost("xai", "xai/grok-4.3", 1_000_000, 500_000),
+            grok_4_3_cost
+        );
+
+        // Grok Build 0.1: $1.00/M input, $2.00/M output.
+        let grok_build_cost =
+            config.calculate_llm_cost("xai", "aura-grok-build-0-1", 1_000_000, 500_000);
+        assert_eq!(grok_build_cost, 200);
+        assert_eq!(
+            config.calculate_llm_cost("xai", "xai/grok-build-0.1", 1_000_000, 500_000),
+            grok_build_cost
+        );
     }
 
     #[test]
@@ -1044,11 +1112,27 @@ mod tests {
         let config = PricingConfig::default();
 
         for (aura_model, fireworks_model, expected_cost) in [
-            ("aura-minimax-m3", "accounts/fireworks/models/minimax-m3", 120),
-            ("aura-minimax-m2-7", "accounts/fireworks/models/minimax-m2p7", 90),
+            (
+                "aura-minimax-m3",
+                "accounts/fireworks/models/minimax-m3",
+                120,
+            ),
+            (
+                "aura-minimax-m2-7",
+                "accounts/fireworks/models/minimax-m2p7",
+                90,
+            ),
             ("aura-glm-5-1", "accounts/fireworks/models/glm-5p1", 360),
-            ("aura-qwen3-6-plus", "accounts/fireworks/models/qwen3p6-plus", 200),
-            ("aura-gemma-4-31b", "accounts/fireworks/models/gemma-4-31b-it", 135),
+            (
+                "aura-qwen3-6-plus",
+                "accounts/fireworks/models/qwen3p6-plus",
+                200,
+            ),
+            (
+                "aura-gemma-4-31b",
+                "accounts/fireworks/models/gemma-4-31b-it",
+                135,
+            ),
             (
                 "aura-gemma-4-26b-a4b",
                 "accounts/fireworks/models/gemma-4-26b-a4b-it",
@@ -1161,11 +1245,7 @@ mod tests {
                 false,
             );
             let via_deepseek = config.calculate_llm_cost_for_zero_pro_user(
-                "deepseek",
-                model,
-                1_000_000,
-                1_000_000,
-                false,
+                "deepseek", model, 1_000_000, 1_000_000, false,
             );
             let via_default = config.calculate_llm_cost_for_zero_pro_user(
                 "fireworks",
