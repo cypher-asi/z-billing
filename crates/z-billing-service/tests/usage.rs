@@ -537,3 +537,34 @@ async fn quote_usage_calculates_llm_cost_without_account_mutation() {
         .unwrap()
         .is_none());
 }
+
+#[tokio::test]
+async fn quote_usage_calculates_cheaper_xai_grok_build_cost() {
+    let harness = TestHarness::new();
+
+    let response = harness
+        .server
+        .post("/v1/usage/quote")
+        .add_header("x-api-key", &harness.service_api_key)
+        .add_header("x-service-name", "aura-router")
+        .json(&json!({
+            "metric": {
+                "type": "llm_tokens",
+                "provider": "xai",
+                "model": "aura-grok-build-0-1",
+                "input_tokens": 1_000_000,
+                "output_tokens": 500_000
+            }
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["cost_cents"], 240);
+    assert_eq!(body["currency"], "USD_CENTS");
+    assert!(harness
+        .store
+        .get_account(&harness.test_user_id)
+        .unwrap()
+        .is_none());
+}

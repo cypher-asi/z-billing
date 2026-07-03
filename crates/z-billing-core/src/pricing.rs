@@ -187,6 +187,23 @@ impl Default for PricingConfig {
         for model in ["aura-grok-4-3", "grok-4.3", "xai/grok-4.3"] {
             llm_pricing.insert(ModelKey::new("xai", model), grok_4_3_pricing.clone());
         }
+        let grok_build_pricing = LlmPricing {
+            input_credits_per_million: 100,
+            output_credits_per_million: 200,
+        };
+        for model in [
+            "aura-grok-build-0-1",
+            "grok-build-0.1",
+            "xai/grok-build-0.1",
+            "grok-code-fast",
+            "xai/grok-code-fast",
+            "grok-code-fast-1",
+            "xai/grok-code-fast-1",
+            "grok-code-fast-1-0825",
+            "xai/grok-code-fast-1-0825",
+        ] {
+            llm_pricing.insert(ModelKey::new("xai", model), grok_build_pricing.clone());
+        }
 
         // Google Gemini chat models at vendor/base rates (credits = USD/1M
         // tokens x 100; 1 Z = $0.01). Pro tiers use the flat (<=200k prompt)
@@ -803,6 +820,7 @@ mod tests {
             ("aura-gemini-3-1-pro", "Google"),
             ("accounts/fireworks/models/gemma-4-31b-it", "Google"),
             ("aura-grok-4-3", "xAI"),
+            ("xai/grok-build-0.1", "xAI"),
             ("aura-deepseek-v4-pro", "DeepSeek AI"),
             ("accounts/fireworks/models/kimi-k2p6", "Moonshot AI"),
             ("accounts/fireworks/models/minimax-m3", "MiniMax"),
@@ -863,6 +881,12 @@ mod tests {
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("xai", "grok-4.3")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("xai", "aura-grok-build-0-1")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("xai", "xai/grok-build-0.1")));
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("deepseek", "aura-deepseek-v4-pro")));
@@ -975,6 +999,19 @@ mod tests {
         assert_eq!(
             config.calculate_llm_cost("xai", "xai/grok-4.3", 1_000_000, 500_000),
             grok_4_3_cost
+        );
+
+        // Grok Build 0.1: $1/M input, $2/M output.
+        let grok_build_cost =
+            config.calculate_llm_cost("xai", "aura-grok-build-0-1", 1_000_000, 500_000);
+        assert_eq!(grok_build_cost, 200);
+        assert_eq!(
+            config.calculate_llm_cost("xai", "grok-build-0.1", 1_000_000, 500_000),
+            grok_build_cost
+        );
+        assert_eq!(
+            config.calculate_llm_cost("xai", "xai/grok-code-fast-1", 1_000_000, 500_000),
+            grok_build_cost
         );
     }
 
