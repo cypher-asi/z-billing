@@ -95,6 +95,7 @@ pub struct LlmPricing {
 | OpenAI     | gpt-4-turbo                  | 1,000          | 3,000           | $10.00    | $30.00     |
 | OpenAI     | gpt-4o                       | 250            | 1,000           | $2.50     | $10.00     |
 | OpenAI     | gpt-4o-mini                  | 15             | 60              | $0.15     | $0.60      |
+| xAI        | grok-4.5                     | 200            | 600             | $2.00     | $6.00      |
 | xAI        | grok-4.3                     | 125            | 250             | $1.25     | $2.50      |
 | xAI        | grok-build-0.1               | 100            | 200             | $1.00     | $2.00      |
 | Google     | gemini-1.5-pro               | 125            | 500             | $1.25     | $5.00      |
@@ -147,6 +148,7 @@ pub fn calculate_llm_cost(
 | Anthropic | claude-3-5-sonnet  | 10,000       | 5,000         | 10             | $0.10      |
 | Anthropic | claude-3-5-sonnet  | 100          | 50            | 1 (minimum)    | $0.01      |
 | OpenAI    | gpt-4o             | 1,000,000    | 0             | 250            | $2.50      |
+| xAI       | grok-4.5           | 1,000,000    | 500,000       | 500            | $5.00      |
 | xAI       | grok-4.3           | 1,000,000    | 500,000       | 250            | $2.50      |
 | xAI       | grok-build-0.1     | 1,000,000    | 500,000       | 200            | $2.00      |
 | Google    | gemini-1.5-flash   | 500,000      | 100,000       | 7              | $0.07      |
