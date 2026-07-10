@@ -95,12 +95,26 @@ pub struct LlmPricing {
 | OpenAI     | gpt-4-turbo                  | 1,000          | 3,000           | $10.00    | $30.00     |
 | OpenAI     | gpt-4o                       | 250            | 1,000           | $2.50     | $10.00     |
 | OpenAI     | gpt-4o-mini                  | 15             | 60              | $0.15     | $0.60      |
+| OpenAI     | gpt-5.6-sol                  | 500            | 3,000           | $5.00     | $30.00     |
+| OpenAI     | gpt-5.6-terra                | 250            | 1,500           | $2.50     | $15.00     |
+| OpenAI     | gpt-5.6-luna                 | 100            | 600             | $1.00     | $6.00      |
+| OpenAI     | gpt-5.5                      | 500            | 3,000           | $5.00     | $30.00     |
+| OpenAI     | gpt-5.4                      | 250            | 1,500           | $2.50     | $15.00     |
 | xAI        | grok-4.5                     | 200            | 600             | $2.00     | $6.00      |
 | xAI        | grok-4.3                     | 125            | 250             | $1.25     | $2.50      |
 | xAI        | grok-build-0.1               | 100            | 200             | $1.00     | $2.00      |
 | Google     | gemini-1.5-pro               | 125            | 500             | $1.25     | $5.00      |
 | Google     | gemini-1.5-flash             | 8              | 30              | $0.08     | $0.30      |
 | (default)  | unknown models               | 100            | 300             | $1.00     | $3.00      |
+
+For GPT-5.6, GPT-5.5, and GPT-5.4, prompts above 272,000 input tokens price the
+entire request at 2x the input rate and 1.5x the output rate. The threshold
+is strict: a 272,000-token prompt keeps the base rate, while 272,001 tokens
+uses the long-context rate.
+
+GPT-5.6 cache writes are billed by aura-router at 1.25x the uncached input
+rate and cache reads at the discounted cached-input rate. Cache-aware usage
+is reported to z-billing as an explicit precomputed cost override.
 
 ## Cost Calculation
 

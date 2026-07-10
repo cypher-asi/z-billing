@@ -6,6 +6,8 @@ use crate::account::Plan;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+const OPENAI_LONG_CONTEXT_THRESHOLD: u64 = 272_000;
+
 /// Pricing configuration for all billable resources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricingConfig {
@@ -148,6 +150,18 @@ impl Default for PricingConfig {
             input_credits_per_million: 500,
             output_credits_per_million: 3000,
         };
+        let gpt_5_6_sol_pricing = LlmPricing {
+            input_credits_per_million: 500,
+            output_credits_per_million: 3000,
+        };
+        let gpt_5_6_terra_pricing = LlmPricing {
+            input_credits_per_million: 250,
+            output_credits_per_million: 1500,
+        };
+        let gpt_5_6_luna_pricing = LlmPricing {
+            input_credits_per_million: 100,
+            output_credits_per_million: 600,
+        };
         let gpt_5_4_mini_pricing = LlmPricing {
             input_credits_per_million: 75,
             output_credits_per_million: 450,
@@ -156,8 +170,38 @@ impl Default for PricingConfig {
             input_credits_per_million: 20,
             output_credits_per_million: 125,
         };
+        for model in [
+            "gpt-5.6",
+            "gpt-5.6-sol",
+            "openai/gpt-5.6",
+            "openai/gpt-5.6-sol",
+            "aura-gpt-5-6-sol",
+        ] {
+            llm_pricing.insert(ModelKey::new("openai", model), gpt_5_6_sol_pricing.clone());
+        }
+        for model in [
+            "gpt-5.6-terra",
+            "openai/gpt-5.6-terra",
+            "aura-gpt-5-6-terra",
+        ] {
+            llm_pricing.insert(
+                ModelKey::new("openai", model),
+                gpt_5_6_terra_pricing.clone(),
+            );
+        }
+        for model in ["gpt-5.6-luna", "openai/gpt-5.6-luna", "aura-gpt-5-6-luna"] {
+            llm_pricing.insert(ModelKey::new("openai", model), gpt_5_6_luna_pricing.clone());
+        }
         llm_pricing.insert(ModelKey::new("openai", "gpt-5.4"), gpt_5_4_pricing.clone());
         llm_pricing.insert(ModelKey::new("openai", "gpt-5.5"), gpt_5_5_pricing.clone());
+        llm_pricing.insert(
+            ModelKey::new("openai", "openai/gpt-5.4"),
+            gpt_5_4_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("openai", "openai/gpt-5.5"),
+            gpt_5_5_pricing.clone(),
+        );
         llm_pricing.insert(
             ModelKey::new("openai", "gpt-5.4-mini"),
             gpt_5_4_mini_pricing.clone(),
@@ -528,6 +572,31 @@ impl PricingConfig {
         }
     }
 
+    fn llm_pricing_for_usage(&self, provider: &str, model: &str, input_tokens: u64) -> LlmPricing {
+        let key = ModelKey::new(provider, model);
+        let mut pricing = self
+            .llm_pricing
+            .get(&key)
+            .unwrap_or(&self.default_llm_pricing)
+            .clone();
+
+        let normalized_model = model.strip_prefix("openai/").unwrap_or(model);
+        let is_long_context_model = matches!(
+            normalized_model,
+            "gpt-5.4" | "gpt-5.5" | "aura-gpt-5-4" | "aura-gpt-5-5"
+        ) || normalized_model.starts_with("gpt-5.6")
+            || normalized_model.starts_with("aura-gpt-5-6-");
+        let is_long_context_openai = provider.eq_ignore_ascii_case("openai")
+            && input_tokens > OPENAI_LONG_CONTEXT_THRESHOLD
+            && is_long_context_model;
+        if is_long_context_openai {
+            pricing.input_credits_per_million = pricing.input_credits_per_million.saturating_mul(2);
+            pricing.output_credits_per_million =
+                pricing.output_credits_per_million.saturating_mul(3) / 2;
+        }
+        pricing
+    }
+
     /// Calculate the cost in cents for LLM token usage.
     ///
     /// Minimum cost is 1 credit for any non-zero usage.
@@ -539,11 +608,7 @@ impl PricingConfig {
         input_tokens: u64,
         output_tokens: u64,
     ) -> i64 {
-        let key = ModelKey::new(provider, model);
-        let pricing = self
-            .llm_pricing
-            .get(&key)
-            .unwrap_or(&self.default_llm_pricing);
+        let pricing = self.llm_pricing_for_usage(provider, model, input_tokens);
 
         let input_cost = (i64::try_from(input_tokens).unwrap_or(i64::MAX)
             * pricing.input_credits_per_million)
@@ -572,12 +637,8 @@ impl PricingConfig {
         output_tokens: u64,
         is_zero_pro_user: bool,
     ) -> i64 {
-        let key = ModelKey::new(provider, model);
-        let pricing = self
-            .llm_pricing
-            .get(&key)
-            .unwrap_or(&self.default_llm_pricing);
-        let marked_up_pricing = self.marked_up_llm_pricing(pricing, is_zero_pro_user);
+        let pricing = self.llm_pricing_for_usage(provider, model, input_tokens);
+        let marked_up_pricing = self.marked_up_llm_pricing(&pricing, is_zero_pro_user);
 
         let input_cost = (i64::try_from(input_tokens).unwrap_or(i64::MAX)
             * marked_up_pricing.input_credits_per_million)
@@ -995,6 +1056,67 @@ mod tests {
         // 5,000 output tokens = 15 credits
         let cost = config.calculate_llm_cost("openai", "aura-gpt-5-5", 10_000, 5_000);
         assert_eq!(cost, 20);
+    }
+
+    #[test]
+    fn calculate_llm_cost_gpt_5_6_family() {
+        let config = PricingConfig::default();
+
+        assert_eq!(
+            config.calculate_llm_cost("openai", "aura-gpt-5-6-sol", 100_000, 100_000),
+            350
+        );
+        assert_eq!(
+            config.calculate_llm_cost("openai", "gpt-5.6-terra", 100_000, 100_000),
+            175
+        );
+        assert_eq!(
+            config.calculate_llm_cost("openai", "openai/gpt-5.6-luna", 100_000, 100_000),
+            70
+        );
+
+        // Sol long context: 1M input @ $10/M + 500k output @ $45/M.
+        assert_eq!(
+            config.calculate_llm_cost("openai", "gpt-5.6", 1_000_000, 500_000),
+            3_250
+        );
+    }
+
+    #[test]
+    fn calculate_llm_cost_applies_openai_long_context_rates_above_272k() {
+        let config = PricingConfig::default();
+
+        let at_threshold = config.calculate_llm_cost("openai", "aura-gpt-5-5", 272_000, 100_000);
+        assert_eq!(at_threshold, 436);
+
+        // GPT-5.5 long context: $10/M input and $45/M output.
+        let over_threshold = config.calculate_llm_cost("openai", "aura-gpt-5-5", 272_001, 100_000);
+        assert_eq!(over_threshold, 722);
+
+        // The raw OpenAI-prefixed alias uses the same step-up.
+        assert_eq!(
+            config.calculate_llm_cost("openai", "openai/gpt-5.5", 272_001, 100_000),
+            over_threshold
+        );
+
+        // GPT-5.4 follows the same published long-context rule.
+        assert_eq!(
+            config.calculate_llm_cost("openai", "aura-gpt-5-4", 1_000_000, 500_000),
+            1_625
+        );
+    }
+
+    #[test]
+    fn marked_up_openai_long_context_cost_uses_the_same_rate_step() {
+        let config = PricingConfig::default();
+        let cost = config.calculate_llm_cost_for_zero_pro_user(
+            "openai",
+            "aura-gpt-5-5",
+            272_001,
+            100_000,
+            false,
+        );
+        assert_eq!(cost, 866);
     }
 
     #[test]
