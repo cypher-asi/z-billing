@@ -706,6 +706,7 @@ fn convert_metric(req: &UsageMetricRequest) -> (UsageMetric, f64) {
                 "openai" => LlmProvider::OpenAi,
                 "google" => LlmProvider::Google,
                 "xai" => LlmProvider::Xai,
+                "moonshot" => LlmProvider::Moonshot,
                 other => LlmProvider::Custom(other.to_string()),
             };
 
