@@ -12,7 +12,7 @@ pub struct LlmUsageEvent {
     /// Agent ID that generated the usage (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
-    /// LLM provider (e.g., "anthropic", "openai", "xai").
+    /// LLM provider (e.g., "anthropic", "openai", "xai", "moonshot").
     pub provider: String,
     /// Model name (e.g., "claude-3-5-sonnet").
     pub model: String,

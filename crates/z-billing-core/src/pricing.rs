@@ -388,16 +388,23 @@ impl Default for PricingConfig {
             deepseek_v4_flash_pricing,
         );
 
+        // Moonshot Kimi K3 direct API pricing. Cache-aware requests carry an
+        // explicit cost override from aura-router; these base rates cover
+        // balance checks, reserves, and non-cached fallback calculation.
+        let kimi_k3_pricing = LlmPricing {
+            input_credits_per_million: 300,
+            output_credits_per_million: 1500,
+        };
+        for model in ["aura-kimi-k3", "kimi-k3", "moonshot/kimi-k3"] {
+            llm_pricing.insert(ModelKey::new("moonshot", model), kimi_k3_pricing.clone());
+        }
+
         // Fireworks-hosted open-weight models at vendor/base rates.
-        let kimi_k2_5_pricing = LlmPricing {
-            input_credits_per_million: 60,
-            output_credits_per_million: 300,
-        };
-        let kimi_k2_5_turbo_pricing = LlmPricing {
-            input_credits_per_million: 99,
-            output_credits_per_million: 494,
-        };
         let kimi_k2_6_pricing = LlmPricing {
+            input_credits_per_million: 95,
+            output_credits_per_million: 400,
+        };
+        let kimi_k2_7_code_pricing = LlmPricing {
             input_credits_per_million: 95,
             output_credits_per_million: 400,
         };
@@ -414,28 +421,20 @@ impl Default for PricingConfig {
             output_credits_per_million: 60,
         };
         llm_pricing.insert(
-            ModelKey::new("fireworks", "aura-kimi-k2-5"),
-            kimi_k2_5_pricing.clone(),
-        );
-        llm_pricing.insert(
-            ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p5"),
-            kimi_k2_5_pricing,
-        );
-        llm_pricing.insert(
-            ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p5-turbo"),
-            kimi_k2_5_turbo_pricing.clone(),
-        );
-        llm_pricing.insert(
-            ModelKey::new("fireworks", "accounts/fireworks/routers/kimi-k2p5-turbo"),
-            kimi_k2_5_turbo_pricing,
-        );
-        llm_pricing.insert(
             ModelKey::new("fireworks", "aura-kimi-k2-6"),
             kimi_k2_6_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p6"),
             kimi_k2_6_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-kimi-k2-7-code"),
+            kimi_k2_7_code_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p7-code"),
+            kimi_k2_7_code_pricing,
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p6-turbo"),
@@ -751,7 +750,7 @@ impl PricingConfig {
 /// Key for looking up LLM model pricing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModelKey {
-    /// Provider name (e.g., "anthropic", "openai").
+    /// Provider name (e.g., "anthropic", "openai", "moonshot").
     pub provider: String,
     /// Model name (e.g., "claude-3-5-sonnet", "gpt-4-turbo").
     pub model: String,
@@ -891,6 +890,7 @@ mod tests {
             ("aura-grok-4-3", "xAI"),
             ("xai/grok-build-0.1", "xAI"),
             ("aura-deepseek-v4-pro", "DeepSeek AI"),
+            ("aura-kimi-k3", "Moonshot AI"),
             ("accounts/fireworks/models/kimi-k2p6", "Moonshot AI"),
             ("accounts/fireworks/models/minimax-m3", "MiniMax"),
             ("accounts/fireworks/models/minimax-m2p7", "MiniMax"),
@@ -970,17 +970,19 @@ mod tests {
             .contains_key(&ModelKey::new("deepseek", "deepseek-v4-flash")));
         assert!(config
             .llm_pricing
+            .contains_key(&ModelKey::new("moonshot", "aura-kimi-k3")));
+        assert!(config
+            .llm_pricing
             .contains_key(&ModelKey::new("fireworks", "aura-kimi-k2-6")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("fireworks", "aura-kimi-k2-7-code")));
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("fireworks", "aura-oss-120b")));
         assert!(config.llm_pricing.contains_key(&ModelKey::new(
             "fireworks",
             "accounts/fireworks/models/kimi-k2p6"
-        )));
-        assert!(config.llm_pricing.contains_key(&ModelKey::new(
-            "fireworks",
-            "accounts/fireworks/models/kimi-k2p5-turbo"
         )));
         assert!(config.llm_pricing.contains_key(&ModelKey::new(
             "fireworks",
@@ -1209,20 +1211,11 @@ mod tests {
     fn calculate_llm_cost_kimi_models() {
         let config = PricingConfig::default();
 
+        let k3_cost = config.calculate_llm_cost("moonshot", "aura-kimi-k3", 1_000_000, 500_000);
+        let k2_7_cost =
+            config.calculate_llm_cost("fireworks", "aura-kimi-k2-7-code", 1_000_000, 500_000);
         let k2_6_cost =
             config.calculate_llm_cost("fireworks", "aura-kimi-k2-6", 1_000_000, 500_000);
-        let k2_5_cost = config.calculate_llm_cost(
-            "fireworks",
-            "accounts/fireworks/models/kimi-k2p5",
-            1_000_000,
-            500_000,
-        );
-        let k2_5_turbo_cost = config.calculate_llm_cost(
-            "fireworks",
-            "accounts/fireworks/routers/kimi-k2p5-turbo",
-            1_000_000,
-            500_000,
-        );
         let k2_6_turbo_cost = config.calculate_llm_cost(
             "fireworks",
             "accounts/fireworks/routers/kimi-k2p6-turbo",
@@ -1236,9 +1229,9 @@ mod tests {
             500_000,
         );
 
+        assert_eq!(k3_cost, 1050);
+        assert_eq!(k2_7_cost, 295);
         assert_eq!(k2_6_cost, 295);
-        assert_eq!(k2_5_cost, 210);
-        assert_eq!(k2_5_turbo_cost, 346);
         assert_eq!(k2_6_turbo_cost, 600);
         assert_eq!(k2_thinking_cost, 185);
     }
@@ -1248,8 +1241,12 @@ mod tests {
         let config = PricingConfig::default();
 
         for (aura_model, fireworks_model, expected_cost) in [
-            ("aura-kimi-k2-5", "accounts/fireworks/models/kimi-k2p5", 210),
             ("aura-kimi-k2-6", "accounts/fireworks/models/kimi-k2p6", 295),
+            (
+                "aura-kimi-k2-7-code",
+                "accounts/fireworks/models/kimi-k2p7-code",
+                295,
+            ),
             (
                 "aura-oss-120b",
                 "accounts/fireworks/models/gpt-oss-120b",
@@ -1328,6 +1325,15 @@ mod tests {
         // 20% markup for everyone — Zero Pro gets same rate
         assert_eq!(non_zero_pro_cost, 12);
         assert_eq!(zero_pro_cost, 12);
+
+        let kimi_k3_cost = config.calculate_llm_cost_for_zero_pro_user(
+            "moonshot",
+            "aura-kimi-k3",
+            1_000_000,
+            500_000,
+            false,
+        );
+        assert_eq!(kimi_k3_cost, 1260);
     }
 
     #[test]
