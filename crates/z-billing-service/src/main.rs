@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use z_billing_service::{create_router, AppState, ServiceConfig};
+use z_billing_service::{anthropic_cost, create_router, AppState, ServiceConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,6 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build app state
     let state = AppState::new(store, config.clone());
+    anthropic_cost::spawn_daily_sync(&config);
 
     // Create the router
     let app = create_router(state);

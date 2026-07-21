@@ -53,6 +53,8 @@ curl http://localhost:8080/health
 | `CORS_ORIGINS` | No | Comma-separated allowed origins (default: `*`) |
 | `MAX_BODY_BYTES` | No | Max request body size (default: 1MB) |
 | `REQUEST_TIMEOUT_SECONDS` | No | Request timeout (default: 30) |
+| `MIXPANEL_PROJECT_TOKEN` | No | Mixpanel project token for server-side billing analytics |
+| `ANTHROPIC_ADMIN_API_KEY` | No | Anthropic Admin API key; when set with Mixpanel, syncs authoritative daily provider cost |
 
 ---
 
@@ -69,6 +71,8 @@ curl http://localhost:8080/health
 ## API Reference
 
 See [docs/api.md](docs/api.md) for the full API reference.
+See [docs/cost-observability.md](docs/cost-observability.md) for the Mixpanel
+provider-cost and margin metric definitions.
 
 ---
 

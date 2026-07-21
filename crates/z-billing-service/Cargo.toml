@@ -60,6 +60,7 @@ hex = "0.4"
 
 [dev-dependencies]
 tempfile.workspace = true
+wiremock.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 axum-test = "15"
 

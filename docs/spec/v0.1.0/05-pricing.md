@@ -88,7 +88,7 @@ pub struct LlmPricing {
 
 | Provider   | Model                        | Input (per 1M) | Output (per 1M) | USD Input | USD Output |
 |------------|------------------------------|----------------|-----------------|-----------|------------|
-| Anthropic  | claude-sonnet-5              | 300            | 1,500           | $3.00     | $15.00     |
+| Anthropic  | claude-sonnet-5              | 200 through 2026-08-31, then 300 | 1,000 through 2026-08-31, then 1,500 | $2.00, then $3.00 | $10.00, then $15.00 |
 | Anthropic  | claude-fable-5               | 1,000          | 5,000           | $10.00    | $50.00     |
 | Anthropic  | claude-3-5-sonnet            | 300            | 1,500           | $3.00     | $15.00     |
 | Anthropic  | claude-3-5-sonnet-20241022   | 300            | 1,500           | $3.00     | $15.00     |
