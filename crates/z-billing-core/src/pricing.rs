@@ -8,6 +8,29 @@ use std::collections::HashMap;
 
 const OPENAI_LONG_CONTEXT_THRESHOLD: u64 = 272_000;
 
+fn is_sonnet_5_model(model: &str) -> bool {
+    matches!(
+        model.strip_prefix("anthropic/").unwrap_or(model),
+        "claude-sonnet-5" | "aura-claude-sonnet-5"
+    )
+}
+
+fn sonnet_5_pricing_on(date: chrono::NaiveDate) -> LlmPricing {
+    let promotional =
+        date <= chrono::NaiveDate::from_ymd_opt(2026, 8, 31).expect("valid pricing date");
+    if promotional {
+        LlmPricing {
+            input_credits_per_million: 200,
+            output_credits_per_million: 1000,
+        }
+    } else {
+        LlmPricing {
+            input_credits_per_million: 300,
+            output_credits_per_million: 1500,
+        }
+    }
+}
+
 /// Pricing configuration for all billable resources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricingConfig {
@@ -36,6 +59,7 @@ impl Default for PricingConfig {
             input_credits_per_million: 300,   // $3.00 per 1M input tokens
             output_credits_per_million: 1500, // $15.00 per 1M output tokens
         };
+        let sonnet_5_pricing = sonnet_5_pricing_on(chrono::Utc::now().date_naive());
         let opus_pricing = LlmPricing {
             input_credits_per_million: 500,   // $5.00 per 1M
             output_credits_per_million: 2500, // $25.00 per 1M
@@ -56,11 +80,11 @@ impl Default for PricingConfig {
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "claude-sonnet-5"),
-            sonnet_pricing.clone(),
+            sonnet_5_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-sonnet-5"),
-            sonnet_pricing.clone(),
+            sonnet_5_pricing,
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "claude-fable-5"),
@@ -588,6 +612,14 @@ impl PricingConfig {
             .unwrap_or(&self.default_llm_pricing)
             .clone();
 
+        // Sonnet 5 has introductory pricing through 2026-08-31 and switches
+        // automatically to its standard rate on 2026-09-01. Evaluate this at
+        // request time so a long-running billing process cannot retain the
+        // promotional rate after the boundary.
+        if provider.eq_ignore_ascii_case("anthropic") && is_sonnet_5_model(model) {
+            pricing = sonnet_5_pricing_on(chrono::Utc::now().date_naive());
+        }
+
         let normalized_model = model.strip_prefix("openai/").unwrap_or(model);
         let is_long_context_model = matches!(
             normalized_model,
@@ -1053,11 +1085,14 @@ mod tests {
     #[test]
     fn calculate_llm_cost_claude_sonnet_5_uses_sonnet_rates() {
         let config = PricingConfig::default();
+        let current = sonnet_5_pricing_on(chrono::Utc::now().date_naive());
+        let base_cost = current.input_credits_per_million + current.output_credits_per_million;
+        let marked_up_cost = (base_cost * 120 + 50) / 100;
 
         for model in ["claude-sonnet-5", "aura-claude-sonnet-5"] {
             assert_eq!(
                 config.calculate_llm_cost("anthropic", model, 1_000_000, 1_000_000),
-                1_800,
+                base_cost,
                 "base cost mismatch for {model}"
             );
             assert_eq!(
@@ -1068,10 +1103,21 @@ mod tests {
                     1_000_000,
                     false,
                 ),
-                2_160,
+                marked_up_cost,
                 "marked-up cost mismatch for {model}"
             );
         }
+    }
+
+    #[test]
+    fn sonnet_5_introductory_pricing_has_an_automatic_boundary() {
+        let august = sonnet_5_pricing_on(chrono::NaiveDate::from_ymd_opt(2026, 8, 31).unwrap());
+        let september = sonnet_5_pricing_on(chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap());
+
+        assert_eq!(august.input_credits_per_million, 200);
+        assert_eq!(august.output_credits_per_million, 1000);
+        assert_eq!(september.input_credits_per_million, 300);
+        assert_eq!(september.output_credits_per_million, 1500);
     }
 
     #[test]

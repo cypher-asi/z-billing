@@ -72,6 +72,9 @@ pub struct ServiceConfig {
 
     /// Mixpanel project token for server-side analytics (optional).
     pub mixpanel_token: Option<String>,
+
+    /// Anthropic Admin API key used for authoritative daily cost sync.
+    pub anthropic_admin_api_key: Option<String>,
 }
 
 /// Lago secrets file structure.
@@ -143,6 +146,9 @@ impl ServiceConfig {
                 .ok()
                 .filter(|s| !s.is_empty()),
             mixpanel_token: std::env::var("MIXPANEL_PROJECT_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            anthropic_admin_api_key: std::env::var("ANTHROPIC_ADMIN_API_KEY")
                 .ok()
                 .filter(|s| !s.is_empty()),
         }
@@ -259,6 +265,7 @@ impl Default for ServiceConfig {
             zos_api_url: None,
             zos_api_internal_token: None,
             mixpanel_token: None,
+            anthropic_admin_api_key: None,
         }
     }
 }

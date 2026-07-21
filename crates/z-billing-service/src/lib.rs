@@ -22,6 +22,7 @@
 #![allow(clippy::missing_errors_doc)] // Axum handlers all return Result
 #![allow(clippy::unused_async)] // Webhook handlers need async for consistency
 
+pub mod anthropic_cost;
 pub mod auth;
 pub mod config;
 pub mod crypto;

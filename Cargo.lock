@@ -3426,6 +3426,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wiremock",
  "z-billing-core",
  "z-billing-store",
 ]

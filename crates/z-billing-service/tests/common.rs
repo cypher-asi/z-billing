@@ -60,6 +60,7 @@ impl TestHarness {
             zos_api_url: None,
             zos_api_internal_token: None,
             mixpanel_token: None,
+            anthropic_admin_api_key: None,
         };
 
         let state = AppState::new(store.clone(), config);

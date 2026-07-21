@@ -229,7 +229,13 @@ pub async fn report_usage(
 
     // Create transaction
     let description = format_usage_description(&body.metric, &auth.service_name);
-    let tx = CreditTransaction::usage(user_id, cost_cents, new_balance, description, body.metadata);
+    let tx = CreditTransaction::usage(
+        user_id,
+        cost_cents,
+        new_balance,
+        description,
+        body.metadata.clone(),
+    );
 
     // Process usage atomically
     let balance = state.store.process_usage(&event, &tx)?;
@@ -246,8 +252,9 @@ pub async fn report_usage(
     {
         let mut props = serde_json::json!({
             "cost_cents": cost_cents,
+            "billed_cost_cents": cost_cents,
             "balance_after": balance,
-            "service": auth.service_name,
+            "service": auth.service_name.clone(),
         });
         if let UsageMetricRequest::LlmTokens {
             ref provider,
@@ -261,6 +268,12 @@ pub async fn report_usage(
             props["input_tokens"] = serde_json::json!(input_tokens);
             props["output_tokens"] = serde_json::json!(output_tokens);
         }
+        append_cost_observability_properties(
+            &mut props,
+            &body.metadata,
+            cost_cents,
+            &auth.service_name,
+        );
         crate::mixpanel::track(
             state.config.mixpanel_token.as_deref(),
             "tokens_consumed",
@@ -470,7 +483,9 @@ pub async fn check_balance(
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_required_cents, CheckBalanceRequest};
+    use super::{
+        append_cost_observability_properties, effective_required_cents, CheckBalanceRequest,
+    };
 
     #[test]
     fn effective_required_cents_uses_model_pricing_for_zero_required_balance() {
@@ -513,6 +528,53 @@ mod tests {
         };
 
         assert_eq!(effective_required_cents(&pricing, false, &request), 50);
+    }
+
+    #[test]
+    fn cost_observability_metadata_becomes_financial_mixpanel_properties() {
+        let metadata = serde_json::json!({
+            "org_id": "org-1",
+            "cost_observability": {
+                "schema_version": 1,
+                "estimated_provider_cost_microusd": 80_000,
+                "estimate_source": "static_model_rates",
+                "pricing_source": "test-pricing",
+                "markup_bps": 2_000,
+                "uncached_input_tokens": 12,
+                "cache_read_input_tokens": 34,
+                "web_search_requests": 1,
+                "code_execution_requests": 2,
+                "service_tier": "standard",
+                "speed": "fast"
+            }
+        });
+        let mut props = serde_json::json!({ "billed_cost_cents": 10 });
+
+        append_cost_observability_properties(&mut props, &metadata, 10, "aura-router");
+
+        assert_eq!(props["estimated_provider_cost_cents"], 8.0);
+        assert_eq!(props["estimated_gross_margin_cents"], 2.0);
+        assert_eq!(props["estimated_gross_margin_percent"], 20.0);
+        assert_eq!(props["cache_read_input_tokens"], 34);
+        assert_eq!(props["web_search_requests"], 1);
+        assert_eq!(props["code_execution_requests"], 2);
+        assert_eq!(props["org_id"], "org-1");
+        assert_eq!(props["service_tier"], "standard");
+        assert_eq!(props["speed"], "fast");
+    }
+
+    #[test]
+    fn cost_observability_metadata_is_ignored_from_other_services() {
+        let metadata = serde_json::json!({
+            "cost_observability": {
+                "estimated_provider_cost_microusd": 1
+            }
+        });
+        let mut props = serde_json::json!({});
+
+        append_cost_observability_properties(&mut props, &metadata, 10, "untrusted-service");
+
+        assert!(props.get("estimated_provider_cost_microusd").is_none());
     }
 }
 
@@ -690,6 +752,98 @@ fn metadata_bool(metadata: &serde_json::Value, key: &str) -> Option<bool> {
         .as_object()
         .and_then(|object| object.get(key))
         .and_then(serde_json::Value::as_bool)
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn append_cost_observability_properties(
+    props: &mut serde_json::Value,
+    metadata: &serde_json::Value,
+    billed_cost_cents: i64,
+    service_name: &str,
+) {
+    // Cost telemetry is a trusted contract with aura-router. Do not flatten
+    // arbitrary service metadata into Mixpanel, where it could create an
+    // unbounded property schema or spoof financial metrics.
+    if service_name != "aura-router" {
+        return;
+    }
+    let Some(target) = props.as_object_mut() else {
+        return;
+    };
+    let Some(cost) = metadata
+        .get("cost_observability")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return;
+    };
+
+    for key in ["org_id", "project_id", "agent_id"] {
+        if let Some(value) = metadata.get(key).and_then(serde_json::Value::as_str) {
+            target.insert(key.to_string(), serde_json::json!(value));
+        }
+    }
+    for key in [
+        "estimate_source",
+        "pricing_source",
+        "service_tier",
+        "inference_geo",
+        "speed",
+    ] {
+        if let Some(value) = cost.get(key).and_then(serde_json::Value::as_str) {
+            target.insert(key.to_string(), serde_json::json!(value));
+        }
+    }
+    for key in [
+        "schema_version",
+        "markup_bps",
+        "uncached_input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_creation_5m_input_tokens",
+        "cache_creation_1h_input_tokens",
+        "cache_read_input_tokens",
+        "web_search_requests",
+        "web_fetch_requests",
+        "code_execution_requests",
+    ] {
+        if let Some(value) = cost.get(key).and_then(serde_json::Value::as_u64) {
+            target.insert(key.to_string(), serde_json::json!(value));
+        }
+    }
+
+    let Some(provider_cost_microusd) = cost
+        .get("estimated_provider_cost_microusd")
+        .and_then(serde_json::Value::as_i64)
+        .filter(|value| *value >= 0)
+    else {
+        return;
+    };
+    let billed_cost_microusd = billed_cost_cents.saturating_mul(10_000);
+    let margin_microusd = billed_cost_microusd.saturating_sub(provider_cost_microusd);
+
+    target.insert("has_provider_cost_estimate".into(), serde_json::json!(true));
+    target.insert(
+        "estimated_provider_cost_microusd".into(),
+        serde_json::json!(provider_cost_microusd),
+    );
+    target.insert(
+        "estimated_provider_cost_cents".into(),
+        serde_json::json!(provider_cost_microusd as f64 / 10_000.0),
+    );
+    target.insert(
+        "estimated_gross_margin_microusd".into(),
+        serde_json::json!(margin_microusd),
+    );
+    target.insert(
+        "estimated_gross_margin_cents".into(),
+        serde_json::json!(margin_microusd as f64 / 10_000.0),
+    );
+    if billed_cost_microusd > 0 {
+        target.insert(
+            "estimated_gross_margin_percent".into(),
+            serde_json::json!(margin_microusd as f64 / billed_cost_microusd as f64 * 100.0),
+        );
+    }
 }
 
 #[allow(clippy::cast_precision_loss)]
