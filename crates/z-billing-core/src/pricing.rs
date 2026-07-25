@@ -95,6 +95,10 @@ impl Default for PricingConfig {
             fable_pricing,
         );
         llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-opus-5"),
+            opus_pricing.clone(),
+        );
+        llm_pricing.insert(
             ModelKey::new("anthropic", "claude-opus-4-6"),
             opus_pricing.clone(),
         );
@@ -120,6 +124,10 @@ impl Default for PricingConfig {
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-opus-4-8"),
+            opus_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "aura-claude-opus-5"),
             opus_pricing.clone(),
         );
         llm_pricing.insert(
@@ -968,6 +976,9 @@ mod tests {
             .contains_key(&ModelKey::new("anthropic", "aura-claude-fable-5")));
         assert!(config
             .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "claude-opus-5")));
+        assert!(config
+            .llm_pricing
             .contains_key(&ModelKey::new("anthropic", "claude-opus-4-6")));
         assert!(config
             .llm_pricing
@@ -984,6 +995,9 @@ mod tests {
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("anthropic", "aura-claude-opus-4-8")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "aura-claude-opus-5")));
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("openai", "aura-gpt-5-4")));
@@ -1042,12 +1056,14 @@ mod tests {
     }
 
     #[test]
-    fn opus_4_x_versions_share_identical_pricing() {
+    fn recent_opus_versions_share_identical_pricing() {
         let config = PricingConfig::default();
         let models = [
+            "claude-opus-5",
             "claude-opus-4-6",
             "claude-opus-4-7",
             "claude-opus-4-8",
+            "aura-claude-opus-5",
             "aura-claude-opus-4-6",
             "aura-claude-opus-4-7",
             "aura-claude-opus-4-8",
@@ -1067,6 +1083,30 @@ mod tests {
                 config.minimum_llm_reserve_cents("anthropic", model),
                 baseline_reserve,
                 "reserve mismatch for {model}"
+            );
+        }
+    }
+
+    #[test]
+    fn calculate_llm_cost_claude_opus_5_uses_published_rates() {
+        let config = PricingConfig::default();
+
+        for model in ["claude-opus-5", "aura-claude-opus-5"] {
+            assert_eq!(
+                config.calculate_llm_cost("anthropic", model, 1_000_000, 1_000_000),
+                3_000,
+                "base cost mismatch for {model}"
+            );
+            assert_eq!(
+                config.calculate_llm_cost_for_zero_pro_user(
+                    "anthropic",
+                    model,
+                    1_000_000,
+                    1_000_000,
+                    false,
+                ),
+                3_600,
+                "marked-up cost mismatch for {model}"
             );
         }
     }
