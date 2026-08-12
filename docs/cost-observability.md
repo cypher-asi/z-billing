@@ -108,9 +108,9 @@ Never label a per-user estimate as exact provider spend: Anthropic's standard
 Cost API is an organization/workspace ledger and does not expose AURA's user
 identifier at that grain.
 
-Claude Sonnet 5 uses Anthropic's introductory $2/$10 per-million input/output
-pricing through August 31, 2026. Both request estimation and z-billing switch
-automatically to the published $3/$15 standard rate on September 1, 2026.
+Claude Sonnet 5 uses Anthropic's permanent $2/$10 per-million input/output
+pricing. Anthropic cancelled the previously announced September 1 increase,
+so request estimation and z-billing no longer carry a scheduled rate change.
 
 Provider references:
 

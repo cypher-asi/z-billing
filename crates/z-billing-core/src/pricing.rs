@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 const OPENAI_LONG_CONTEXT_THRESHOLD: u64 = 272_000;
+const XAI_LONG_CONTEXT_THRESHOLD: u64 = 200_000;
+const GOOGLE_LONG_CONTEXT_THRESHOLD: u64 = 200_000;
 
 fn is_sonnet_5_model(model: &str) -> bool {
     matches!(
@@ -15,19 +17,10 @@ fn is_sonnet_5_model(model: &str) -> bool {
     )
 }
 
-fn sonnet_5_pricing_on(date: chrono::NaiveDate) -> LlmPricing {
-    let promotional =
-        date <= chrono::NaiveDate::from_ymd_opt(2026, 8, 31).expect("valid pricing date");
-    if promotional {
-        LlmPricing {
-            input_credits_per_million: 200,
-            output_credits_per_million: 1000,
-        }
-    } else {
-        LlmPricing {
-            input_credits_per_million: 300,
-            output_credits_per_million: 1500,
-        }
+fn sonnet_5_pricing_on(_date: chrono::NaiveDate) -> LlmPricing {
+    LlmPricing {
+        input_credits_per_million: 200,
+        output_credits_per_million: 1000,
     }
 }
 
@@ -195,12 +188,12 @@ impl Default for PricingConfig {
             output_credits_per_million: 3000,
         };
         let gpt_5_6_terra_pricing = LlmPricing {
-            input_credits_per_million: 250,
-            output_credits_per_million: 1500,
+            input_credits_per_million: 200,
+            output_credits_per_million: 1200,
         };
         let gpt_5_6_luna_pricing = LlmPricing {
-            input_credits_per_million: 100,
-            output_credits_per_million: 600,
+            input_credits_per_million: 20,
+            output_credits_per_million: 120,
         };
         let gpt_5_4_mini_pricing = LlmPricing {
             input_credits_per_million: 75,
@@ -366,66 +359,84 @@ impl Default for PricingConfig {
 
         // DeepSeek direct API models at cache-miss/base input rates. Callers can
         // send cost_cents when DeepSeek returns cache hit/miss token details.
-        let deepseek_v4_pro_pricing = LlmPricing {
-            input_credits_per_million: 174,
-            output_credits_per_million: 348,
+        // The direct Pro input rate is $0.435/M; the integer Z-credit fallback
+        // rounds that to 44 cents. aura-router reports exact cache-aware cost.
+        let deepseek_v4_pro_direct_pricing = LlmPricing {
+            input_credits_per_million: 44,
+            output_credits_per_million: 87,
         };
-        let deepseek_v4_flash_pricing = LlmPricing {
+        let deepseek_v4_flash_direct_pricing = LlmPricing {
             input_credits_per_million: 14,
             output_credits_per_million: 28,
         };
         llm_pricing.insert(
             ModelKey::new("deepseek", "aura-deepseek-v4-pro"),
-            deepseek_v4_pro_pricing.clone(),
+            deepseek_v4_pro_direct_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("deepseek", "deepseek-v4-pro"),
-            deepseek_v4_pro_pricing.clone(),
+            deepseek_v4_pro_direct_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("deepseek", "deepseek/deepseek-v4-pro"),
-            deepseek_v4_pro_pricing.clone(),
+            deepseek_v4_pro_direct_pricing,
         );
         llm_pricing.insert(
             ModelKey::new("deepseek", "aura-deepseek-v4-flash"),
-            deepseek_v4_flash_pricing.clone(),
+            deepseek_v4_flash_direct_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("deepseek", "deepseek-v4-flash"),
-            deepseek_v4_flash_pricing.clone(),
+            deepseek_v4_flash_direct_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("deepseek", "deepseek/deepseek-v4-flash"),
-            deepseek_v4_flash_pricing.clone(),
+            deepseek_v4_flash_direct_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("deepseek", "deepseek-chat"),
-            deepseek_v4_flash_pricing.clone(),
+            deepseek_v4_flash_direct_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("deepseek", "deepseek-reasoner"),
-            deepseek_v4_flash_pricing.clone(),
+            deepseek_v4_flash_direct_pricing,
         );
 
-        // DeepSeek V4 models are served via Fireworks, so aura-router reports
-        // their usage under the "fireworks" provider. Register the same base
-        // rates under that provider key so the standard 20% markup applies on
-        // the auto-compute path instead of falling back to default pricing.
+        // Aura's DeepSeek V4 aliases are hosted by Fireworks at its published
+        // serverless rates, which differ from DeepSeek's direct Pro price.
+        let deepseek_v4_pro_fireworks_pricing = LlmPricing {
+            input_credits_per_million: 174,
+            output_credits_per_million: 348,
+        };
+        let deepseek_v4_flash_fireworks_pricing = LlmPricing {
+            input_credits_per_million: 14,
+            output_credits_per_million: 28,
+        };
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-deepseek-v4-pro"),
-            deepseek_v4_pro_pricing.clone(),
+            deepseek_v4_pro_fireworks_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "accounts/fireworks/models/deepseek-v4-pro"),
-            deepseek_v4_pro_pricing,
+            deepseek_v4_pro_fireworks_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-deepseek-v4-flash"),
-            deepseek_v4_flash_pricing.clone(),
+            deepseek_v4_flash_fireworks_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "accounts/fireworks/models/deepseek-v4-flash"),
-            deepseek_v4_flash_pricing,
+            deepseek_v4_flash_fireworks_pricing.clone(),
+        );
+        // Compatibility for older routers that attributed Aura aliases to the
+        // model maker rather than their actual Fireworks host.
+        llm_pricing.insert(
+            ModelKey::new("deepseek", "aura-deepseek-v4-pro"),
+            deepseek_v4_pro_fireworks_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("deepseek", "aura-deepseek-v4-flash"),
+            deepseek_v4_flash_fireworks_pricing,
         );
 
         // Fireworks-hosted open-weight models at vendor/base rates.
@@ -438,6 +449,10 @@ impl Default for PricingConfig {
             output_credits_per_million: 494,
         };
         let kimi_k2_6_pricing = LlmPricing {
+            input_credits_per_million: 95,
+            output_credits_per_million: 400,
+        };
+        let kimi_k2_7_code_pricing = LlmPricing {
             input_credits_per_million: 95,
             output_credits_per_million: 400,
         };
@@ -478,6 +493,14 @@ impl Default for PricingConfig {
             kimi_k2_6_pricing,
         );
         llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-kimi-k2-7-code"),
+            kimi_k2_7_code_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p7-code"),
+            kimi_k2_7_code_pricing,
+        );
+        llm_pricing.insert(
             ModelKey::new("fireworks", "accounts/fireworks/models/kimi-k2p6-turbo"),
             kimi_k2_6_turbo_pricing.clone(),
         );
@@ -509,8 +532,8 @@ impl Default for PricingConfig {
         // tier-priced by Fireworks (uniform input/output, no cached-input
         // discount), so input and output rates match.
         let minimax_m3_pricing = LlmPricing {
-            input_credits_per_million: 40,
-            output_credits_per_million: 160,
+            input_credits_per_million: 30,
+            output_credits_per_million: 120,
         };
         let minimax_m2_7_pricing = LlmPricing {
             input_credits_per_million: 30,
@@ -520,9 +543,17 @@ impl Default for PricingConfig {
             input_credits_per_million: 140,
             output_credits_per_million: 440,
         };
+        let glm_5_2_pricing = LlmPricing {
+            input_credits_per_million: 140,
+            output_credits_per_million: 440,
+        };
         let qwen3_6_plus_pricing = LlmPricing {
             input_credits_per_million: 50,
             output_credits_per_million: 300,
+        };
+        let qwen3_7_plus_pricing = LlmPricing {
+            input_credits_per_million: 40,
+            output_credits_per_million: 160,
         };
         let gemma_4_31b_pricing = LlmPricing {
             input_credits_per_million: 90,
@@ -557,12 +588,28 @@ impl Default for PricingConfig {
             glm_5_1_pricing,
         );
         llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-glm-5-2"),
+            glm_5_2_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/glm-5p2"),
+            glm_5_2_pricing,
+        );
+        llm_pricing.insert(
             ModelKey::new("fireworks", "aura-qwen3-6-plus"),
             qwen3_6_plus_pricing.clone(),
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "accounts/fireworks/models/qwen3p6-plus"),
             qwen3_6_plus_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "aura-qwen3-7-plus"),
+            qwen3_7_plus_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("fireworks", "accounts/fireworks/models/qwen3p7-plus"),
+            qwen3_7_plus_pricing,
         );
         llm_pricing.insert(
             ModelKey::new("fireworks", "aura-gemma-4-31b"),
@@ -620,27 +667,43 @@ impl PricingConfig {
             .unwrap_or(&self.default_llm_pricing)
             .clone();
 
-        // Sonnet 5 has introductory pricing through 2026-08-31 and switches
-        // automatically to its standard rate on 2026-09-01. Evaluate this at
-        // request time so a long-running billing process cannot retain the
-        // promotional rate after the boundary.
+        // Anthropic made Sonnet 5's original $2/$10 launch pricing permanent.
         if provider.eq_ignore_ascii_case("anthropic") && is_sonnet_5_model(model) {
             pricing = sonnet_5_pricing_on(chrono::Utc::now().date_naive());
         }
 
-        let normalized_model = model.strip_prefix("openai/").unwrap_or(model);
-        let is_long_context_model = matches!(
-            normalized_model,
-            "gpt-5.4" | "gpt-5.5" | "aura-gpt-5-4" | "aura-gpt-5-5"
-        ) || normalized_model.starts_with("gpt-5.6")
-            || normalized_model.starts_with("aura-gpt-5-6-");
-        let is_long_context_openai = provider.eq_ignore_ascii_case("openai")
+        let normalized_model = model
+            .strip_prefix("openai/")
+            .or_else(|| model.strip_prefix("xai/"))
+            .or_else(|| model.strip_prefix("google/"))
+            .unwrap_or(model);
+        let openai_long = provider.eq_ignore_ascii_case("openai")
             && input_tokens > OPENAI_LONG_CONTEXT_THRESHOLD
-            && is_long_context_model;
-        if is_long_context_openai {
+            && (matches!(
+                normalized_model,
+                "gpt-5.4" | "gpt-5.5" | "aura-gpt-5-4" | "aura-gpt-5-5"
+            ) || normalized_model.starts_with("gpt-5.6")
+                || normalized_model.starts_with("aura-gpt-5-6-"));
+        let xai_long = provider.eq_ignore_ascii_case("xai")
+            && input_tokens >= XAI_LONG_CONTEXT_THRESHOLD
+            && (normalized_model.starts_with("grok-")
+                || normalized_model.starts_with("aura-grok-"));
+        let google_long = provider.eq_ignore_ascii_case("google")
+            && input_tokens > GOOGLE_LONG_CONTEXT_THRESHOLD
+            && matches!(
+                normalized_model,
+                "aura-gemini-3-1-pro"
+                    | "gemini-3.1-pro-preview"
+                    | "aura-gemini-2-5-pro"
+                    | "gemini-2.5-pro"
+            );
+        if openai_long || google_long || xai_long {
             pricing.input_credits_per_million = pricing.input_credits_per_million.saturating_mul(2);
-            pricing.output_credits_per_million =
-                pricing.output_credits_per_million.saturating_mul(3) / 2;
+            pricing.output_credits_per_million = if xai_long {
+                pricing.output_credits_per_million.saturating_mul(2)
+            } else {
+                pricing.output_credits_per_million.saturating_mul(3) / 2
+            };
         }
         pricing
     }
@@ -1034,6 +1097,21 @@ mod tests {
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("fireworks", "aura-oss-120b")));
+        for model in [
+            "aura-kimi-k2-7-code",
+            "aura-minimax-m3",
+            "aura-minimax-m2-7",
+            "aura-glm-5-2",
+            "aura-glm-5-1",
+            "aura-qwen3-7-plus",
+        ] {
+            assert!(
+                config
+                    .llm_pricing
+                    .contains_key(&ModelKey::new("fireworks", model)),
+                "missing pricing for {model}"
+            );
+        }
         assert!(config.llm_pricing.contains_key(&ModelKey::new(
             "fireworks",
             "accounts/fireworks/models/kimi-k2p6"
@@ -1150,14 +1228,14 @@ mod tests {
     }
 
     #[test]
-    fn sonnet_5_introductory_pricing_has_an_automatic_boundary() {
+    fn sonnet_5_launch_pricing_remains_permanent() {
         let august = sonnet_5_pricing_on(chrono::NaiveDate::from_ymd_opt(2026, 8, 31).unwrap());
         let september = sonnet_5_pricing_on(chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap());
 
         assert_eq!(august.input_credits_per_million, 200);
         assert_eq!(august.output_credits_per_million, 1000);
-        assert_eq!(september.input_credits_per_million, 300);
-        assert_eq!(september.output_credits_per_million, 1500);
+        assert_eq!(september.input_credits_per_million, 200);
+        assert_eq!(september.output_credits_per_million, 1000);
     }
 
     #[test]
@@ -1192,11 +1270,11 @@ mod tests {
         );
         assert_eq!(
             config.calculate_llm_cost("openai", "gpt-5.6-terra", 100_000, 100_000),
-            175
+            140
         );
         assert_eq!(
             config.calculate_llm_cost("openai", "openai/gpt-5.6-luna", 100_000, 100_000),
-            70
+            14
         );
 
         // Sol long context: 1M input @ $10/M + 500k output @ $45/M.
@@ -1247,9 +1325,9 @@ mod tests {
     fn calculate_llm_cost_xai_grok_models() {
         let config = PricingConfig::default();
 
-        // Grok 4.5: $2/M input, $6/M output.
+        // Grok's >=200K prompt tier doubles both input and output rates.
         let grok_4_5_cost = config.calculate_llm_cost("xai", "aura-grok-4-5", 1_000_000, 500_000);
-        assert_eq!(grok_4_5_cost, 500);
+        assert_eq!(grok_4_5_cost, 1_000);
         assert_eq!(
             config.calculate_llm_cost("xai", "grok-4.5", 1_000_000, 500_000),
             grok_4_5_cost
@@ -1261,7 +1339,7 @@ mod tests {
 
         // Grok 4.3: $1.25/M input, $2.50/M output.
         let grok_4_3_cost = config.calculate_llm_cost("xai", "aura-grok-4-3", 1_000_000, 500_000);
-        assert_eq!(grok_4_3_cost, 250);
+        assert_eq!(grok_4_3_cost, 500);
 
         // Raw upstream and xai-prefixed forms must resolve to the same rates.
         assert_eq!(
@@ -1276,7 +1354,7 @@ mod tests {
         // Grok Build 0.1: $1/M input, $2/M output.
         let grok_build_cost =
             config.calculate_llm_cost("xai", "aura-grok-build-0-1", 1_000_000, 500_000);
-        assert_eq!(grok_build_cost, 200);
+        assert_eq!(grok_build_cost, 400);
         assert_eq!(
             config.calculate_llm_cost("xai", "grok-build-0.1", 1_000_000, 500_000),
             grok_build_cost
@@ -1291,11 +1369,10 @@ mod tests {
     fn calculate_llm_cost_gemini_models() {
         let config = PricingConfig::default();
 
-        // gemini-2.5-pro: 125 credits/1M input, 1000 credits/1M output.
-        // 1M input = 125 credits, 500k output = 500 credits => 625 total.
+        // Pro models step up above a 200K-token prompt.
         let pro_cost =
             config.calculate_llm_cost("google", "aura-gemini-2-5-pro", 1_000_000, 500_000);
-        assert_eq!(pro_cost, 625);
+        assert_eq!(pro_cost, 1_000);
 
         // The branded alias and the raw upstream name resolve to the same rate.
         let pro_cost_raw =
@@ -1305,7 +1382,7 @@ mod tests {
         // gemini-3.1-pro (newest, most expensive tier): 200 in / 1200 out.
         let gemini_3_pro_cost =
             config.calculate_llm_cost("google", "aura-gemini-3-1-pro", 1_000_000, 500_000);
-        assert_eq!(gemini_3_pro_cost, 800);
+        assert_eq!(gemini_3_pro_cost, 1_300);
 
         // Flash-Lite 2.5 (cheapest tier): 10 in / 40 out.
         let flash_lite_cost =
@@ -1317,14 +1394,13 @@ mod tests {
     fn calculate_llm_cost_deepseek_v4() {
         let config = PricingConfig::default();
 
-        let pro_cost =
-            config.calculate_llm_cost("deepseek", "aura-deepseek-v4-pro", 1_000_000, 500_000);
+        let pro_cost = config.calculate_llm_cost("deepseek", "deepseek-v4-pro", 1_000_000, 500_000);
         let flash_cost =
             config.calculate_llm_cost("deepseek", "deepseek/deepseek-v4-flash", 1_000_000, 500_000);
         let legacy_chat_cost =
             config.calculate_llm_cost("deepseek", "deepseek-chat", 1_000_000, 500_000);
 
-        assert_eq!(pro_cost, 348);
+        assert_eq!(pro_cost, 87);
         assert_eq!(flash_cost, 28);
         assert_eq!(legacy_chat_cost, flash_cost);
     }
@@ -1397,7 +1473,7 @@ mod tests {
             (
                 "aura-minimax-m3",
                 "accounts/fireworks/models/minimax-m3",
-                120,
+                90,
             ),
             (
                 "aura-minimax-m2-7",
@@ -1405,10 +1481,21 @@ mod tests {
                 90,
             ),
             ("aura-glm-5-1", "accounts/fireworks/models/glm-5p1", 360),
+            ("aura-glm-5-2", "accounts/fireworks/models/glm-5p2", 360),
             (
                 "aura-qwen3-6-plus",
                 "accounts/fireworks/models/qwen3p6-plus",
                 200,
+            ),
+            (
+                "aura-qwen3-7-plus",
+                "accounts/fireworks/models/qwen3p7-plus",
+                120,
+            ),
+            (
+                "aura-kimi-k2-7-code",
+                "accounts/fireworks/models/kimi-k2p7-code",
+                295,
             ),
             (
                 "aura-gemma-4-31b",
@@ -1512,33 +1599,25 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_via_fireworks_prices_same_as_direct_deepseek() {
+    fn deepseek_via_fireworks_uses_the_hosted_rate_card() {
         let config = PricingConfig::default();
 
-        // DeepSeek now bills under the "fireworks" provider; the marked-up cost
-        // must equal the prior "deepseek"-provider cost (not the default 100/300
-        // fallback) so the routing change does not alter what users pay.
-        for model in ["aura-deepseek-v4-pro", "aura-deepseek-v4-flash"] {
-            let via_fireworks = config.calculate_llm_cost_for_zero_pro_user(
-                "fireworks",
-                model,
-                1_000_000,
-                1_000_000,
-                false,
-            );
-            let via_deepseek = config.calculate_llm_cost_for_zero_pro_user(
-                "deepseek", model, 1_000_000, 1_000_000, false,
-            );
-            let via_default = config.calculate_llm_cost_for_zero_pro_user(
-                "fireworks",
-                "some-unknown-model",
-                1_000_000,
-                1_000_000,
-                false,
-            );
-            assert_eq!(via_fireworks, via_deepseek, "cost parity for {model}");
-            assert_ne!(via_fireworks, via_default, "must not use default rates");
-        }
+        let via_fireworks = config.calculate_llm_cost_for_zero_pro_user(
+            "fireworks",
+            "aura-deepseek-v4-pro",
+            1_000_000,
+            1_000_000,
+            false,
+        );
+        let via_deepseek = config.calculate_llm_cost_for_zero_pro_user(
+            "deepseek",
+            "deepseek-v4-pro",
+            1_000_000,
+            1_000_000,
+            false,
+        );
+        assert_eq!(via_fireworks, 627);
+        assert_eq!(via_deepseek, 157);
     }
 
     #[test]
