@@ -89,7 +89,7 @@ pub struct LlmPricing {
 | Provider   | Model                        | Input (per 1M) | Output (per 1M) | USD Input | USD Output |
 |------------|------------------------------|----------------|-----------------|-----------|------------|
 | Anthropic  | claude-opus-5                | 500            | 2,500           | $5.00     | $25.00     |
-| Anthropic  | claude-sonnet-5              | 200 through 2026-08-31, then 300 | 1,000 through 2026-08-31, then 1,500 | $2.00, then $3.00 | $10.00, then $15.00 |
+| Anthropic  | claude-sonnet-5              | 200            | 1,000           | $2.00     | $10.00     |
 | Anthropic  | claude-fable-5               | 1,000          | 5,000           | $10.00    | $50.00     |
 | Anthropic  | claude-3-5-sonnet            | 300            | 1,500           | $3.00     | $15.00     |
 | Anthropic  | claude-3-5-sonnet-20241022   | 300            | 1,500           | $3.00     | $15.00     |
@@ -99,21 +99,47 @@ pub struct LlmPricing {
 | OpenAI     | gpt-4o                       | 250            | 1,000           | $2.50     | $10.00     |
 | OpenAI     | gpt-4o-mini                  | 15             | 60              | $0.15     | $0.60      |
 | OpenAI     | gpt-5.6-sol                  | 500            | 3,000           | $5.00     | $30.00     |
-| OpenAI     | gpt-5.6-terra                | 250            | 1,500           | $2.50     | $15.00     |
-| OpenAI     | gpt-5.6-luna                 | 100            | 600             | $1.00     | $6.00      |
+| OpenAI     | gpt-5.6-terra                | 200            | 1,200           | $2.00     | $12.00     |
+| OpenAI     | gpt-5.6-luna                 | 20             | 120             | $0.20     | $1.20      |
 | OpenAI     | gpt-5.5                      | 500            | 3,000           | $5.00     | $30.00     |
 | OpenAI     | gpt-5.4                      | 250            | 1,500           | $2.50     | $15.00     |
+| OpenAI     | gpt-5.4-mini                 | 75             | 450             | $0.75     | $4.50      |
+| OpenAI     | gpt-5.4-nano                 | 20             | 125             | $0.20     | $1.25      |
 | xAI        | grok-4.5                     | 200            | 600             | $2.00     | $6.00      |
 | xAI        | grok-4.3                     | 125            | 250             | $1.25     | $2.50      |
 | xAI        | grok-build-0.1               | 100            | 200             | $1.00     | $2.00      |
-| Google     | gemini-1.5-pro               | 125            | 500             | $1.25     | $5.00      |
-| Google     | gemini-1.5-flash             | 8              | 30              | $0.08     | $0.30      |
+| Google     | gemini-3.1-pro               | 200            | 1,200           | $2.00     | $12.00     |
+| Google     | gemini-3.5-flash             | 150            | 900             | $1.50     | $9.00      |
+| Google     | gemini-3-flash               | 50             | 300             | $0.50     | $3.00      |
+| Google     | gemini-3.1-flash-lite        | 25             | 150             | $0.25     | $1.50      |
+| Google     | gemini-2.5-pro               | 125            | 1,000           | $1.25     | $10.00     |
+| Google     | gemini-2.5-flash             | 30             | 250             | $0.30     | $2.50      |
+| Google     | gemini-2.5-flash-lite        | 10             | 40              | $0.10     | $0.40      |
+| Fireworks  | kimi-k2p7-code               | 95             | 400             | $0.95     | $4.00      |
+| Fireworks  | kimi-k2p6                    | 95             | 400             | $0.95     | $4.00      |
+| Fireworks  | gpt-oss-120b                 | 15             | 60              | $0.15     | $0.60      |
+| Fireworks  | minimax-m3                   | 30             | 120             | $0.30     | $1.20      |
+| Fireworks  | minimax-m2p7                 | 30             | 120             | $0.30     | $1.20      |
+| Fireworks  | glm-5p2                      | 140            | 440             | $1.40     | $4.40      |
+| Fireworks  | glm-5p1                      | 140            | 440             | $1.40     | $4.40      |
+| Fireworks  | qwen3p7-plus                 | 40             | 160             | $0.40     | $1.60      |
+| Fireworks  | deepseek-v4-pro              | 174            | 348             | $1.74     | $3.48      |
+| Fireworks  | deepseek-v4-flash            | 14             | 28              | $0.14     | $0.28      |
+| DeepSeek   | deepseek-v4-pro (direct)     | 44*            | 87              | $0.435*   | $0.87      |
+| DeepSeek   | deepseek-v4-flash (direct)   | 14             | 28              | $0.14     | $0.28      |
 | (default)  | unknown models               | 100            | 300             | $1.00     | $3.00      |
+
+`*` The integer fallback rounds DeepSeek V4 Pro's $0.435 input rate to 44 Z
+credits per million. aura-router's normal detailed-cost path retains the exact
+provider price before rounding the final request debit.
 
 For GPT-5.6, GPT-5.5, and GPT-5.4, prompts above 272,000 input tokens price the
 entire request at 2x the input rate and 1.5x the output rate. The threshold
 is strict: a 272,000-token prompt keeps the base rate, while 272,001 tokens
 uses the long-context rate.
+
+xAI prompts at or above 200,000 tokens use 2x input and output rates. Gemini
+3.1 Pro and 2.5 Pro prompts above 200,000 tokens use 2x input and 1.5x output.
 
 GPT-5.6 cache writes are billed by aura-router at 1.25x the uncached input
 rate and cache reads at the discounted cached-input rate. Cache-aware usage
@@ -165,10 +191,10 @@ pub fn calculate_llm_cost(
 | Anthropic | claude-3-5-sonnet  | 10,000       | 5,000         | 10             | $0.10      |
 | Anthropic | claude-3-5-sonnet  | 100          | 50            | 1 (minimum)    | $0.01      |
 | OpenAI    | gpt-4o             | 1,000,000    | 0             | 250            | $2.50      |
-| xAI       | grok-4.5           | 1,000,000    | 500,000       | 500            | $5.00      |
-| xAI       | grok-4.3           | 1,000,000    | 500,000       | 250            | $2.50      |
-| xAI       | grok-build-0.1     | 1,000,000    | 500,000       | 200            | $2.00      |
-| Google    | gemini-1.5-flash   | 500,000      | 100,000       | 7              | $0.07      |
+| xAI       | grok-4.5           | 1,000,000    | 500,000       | 1,000          | $10.00     |
+| xAI       | grok-4.3           | 1,000,000    | 500,000       | 500            | $5.00      |
+| xAI       | grok-build-0.1     | 1,000,000    | 500,000       | 400            | $4.00      |
+| Google    | gemini-2.5-flash   | 500,000      | 100,000       | 40             | $0.40      |
 | Unknown   | mystery-model      | 1,000,000    | 0             | 100            | $1.00      |
 
 ### Compute Cost
