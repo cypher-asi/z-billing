@@ -257,6 +257,13 @@ impl Default for PricingConfig {
         // xAI Grok chat models at vendor/base rates. Cache-aware usage can be
         // reported with precomputed cost_cents by aura-router; these base rates
         // cover quotes, reserves, and fallback usage calculation.
+        let grok_4_6_pricing = LlmPricing {
+            input_credits_per_million: 200,
+            output_credits_per_million: 600,
+        };
+        for model in ["aura-grok-4-6", "grok-4.6", "xai/grok-4.6"] {
+            llm_pricing.insert(ModelKey::new("xai", model), grok_4_6_pricing.clone());
+        }
         let grok_4_5_pricing = LlmPricing {
             input_credits_per_million: 200,
             output_credits_per_million: 600,
@@ -1009,6 +1016,7 @@ mod tests {
             ("accounts/fireworks/models/gpt-oss-120b", "OpenAI"),
             ("aura-gemini-3-1-pro", "Google"),
             ("accounts/fireworks/models/gemma-4-31b-it", "Google"),
+            ("aura-grok-4-6", "xAI"),
             ("aura-grok-4-5", "xAI"),
             ("aura-grok-4-3", "xAI"),
             ("xai/grok-build-0.1", "xAI"),
@@ -1079,6 +1087,12 @@ mod tests {
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("openai", "aura-gpt-5-5")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("xai", "aura-grok-4-6")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("xai", "grok-4.6")));
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("xai", "aura-grok-4-5")));
@@ -1343,7 +1357,29 @@ mod tests {
     fn calculate_llm_cost_xai_grok_models() {
         let config = PricingConfig::default();
 
+        // Grok 4.6 uses $2/M input and $6/M output below 200K.
+        assert_eq!(
+            config.calculate_llm_cost("xai", "aura-grok-4-6", 100_000, 100_000),
+            80
+        );
+        // At exactly 200K input, all tokens use the $4/M and $12/M rates.
+        assert_eq!(
+            config.calculate_llm_cost("xai", "aura-grok-4-6", 200_000, 100_000),
+            200
+        );
+
         // Grok's >=200K prompt tier doubles both input and output rates.
+        let grok_4_6_cost = config.calculate_llm_cost("xai", "aura-grok-4-6", 1_000_000, 500_000);
+        assert_eq!(grok_4_6_cost, 1_000);
+        assert_eq!(
+            config.calculate_llm_cost("xai", "grok-4.6", 1_000_000, 500_000),
+            grok_4_6_cost
+        );
+        assert_eq!(
+            config.calculate_llm_cost("xai", "xai/grok-4.6", 1_000_000, 500_000),
+            grok_4_6_cost
+        );
+
         let grok_4_5_cost = config.calculate_llm_cost("xai", "aura-grok-4-5", 1_000_000, 500_000);
         assert_eq!(grok_4_5_cost, 1_000);
         assert_eq!(
