@@ -105,6 +105,7 @@ pub struct LlmPricing {
 | OpenAI     | gpt-5.4                      | 250            | 1,500           | $2.50     | $15.00     |
 | OpenAI     | gpt-5.4-mini                 | 75             | 450             | $0.75     | $4.50      |
 | OpenAI     | gpt-5.4-nano                 | 20             | 125             | $0.20     | $1.25      |
+| xAI        | grok-4.6                     | 200            | 600             | $2.00     | $6.00      |
 | xAI        | grok-4.5                     | 200            | 600             | $2.00     | $6.00      |
 | xAI        | grok-4.3                     | 125            | 250             | $1.25     | $2.50      |
 | xAI        | grok-build-0.1               | 100            | 200             | $1.00     | $2.00      |
@@ -141,6 +142,10 @@ uses the long-context rate.
 
 xAI prompts at or above 200,000 tokens use 2x input and output rates. Gemini
 3.1 Pro and 2.5 Pro prompts above 200,000 tokens use 2x input and 1.5x output.
+
+Grok 4.6 cached input is $0.50 per million tokens below the threshold and
+$1.00 per million at or above it. aura-router reports cache-aware xAI usage
+to z-billing as an explicit precomputed cost override.
 
 GPT-5.6 cache writes are billed by aura-router at 1.25x the uncached input
 rate and cache reads at the discounted cached-input rate. Cache-aware usage
@@ -195,6 +200,7 @@ pub fn calculate_llm_cost(
 | Anthropic | claude-3-5-sonnet  | 10,000       | 5,000         | 10             | $0.10      |
 | Anthropic | claude-3-5-sonnet  | 100          | 50            | 1 (minimum)    | $0.01      |
 | OpenAI    | gpt-4o             | 1,000,000    | 0             | 250            | $2.50      |
+| xAI       | grok-4.6           | 1,000,000    | 500,000       | 1,000          | $10.00     |
 | xAI       | grok-4.5           | 1,000,000    | 500,000       | 1,000          | $10.00     |
 | xAI       | grok-4.3           | 1,000,000    | 500,000       | 500            | $5.00      |
 | xAI       | grok-build-0.1     | 1,000,000    | 500,000       | 400            | $4.00      |
