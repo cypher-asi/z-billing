@@ -190,6 +190,9 @@ pub enum LlmProvider {
     /// xAI (Grok models).
     Xai,
 
+    /// Moonshot AI (Kimi models).
+    Moonshot,
+
     /// Custom provider.
     Custom(String),
 }
@@ -203,6 +206,7 @@ impl LlmProvider {
             Self::OpenAi => "openai",
             Self::Google => "google",
             Self::Xai => "xai",
+            Self::Moonshot => "moonshot",
             Self::Custom(name) => name,
         }
     }
@@ -265,7 +269,8 @@ mod tests {
     }
 
     #[test]
-    fn llm_provider_as_str_includes_xai() {
+    fn llm_provider_as_str_includes_first_class_providers() {
         assert_eq!(LlmProvider::Xai.as_str(), "xai");
+        assert_eq!(LlmProvider::Moonshot.as_str(), "moonshot");
     }
 }

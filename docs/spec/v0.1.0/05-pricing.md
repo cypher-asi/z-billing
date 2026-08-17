@@ -108,6 +108,7 @@ pub struct LlmPricing {
 | xAI        | grok-4.5                     | 200            | 600             | $2.00     | $6.00      |
 | xAI        | grok-4.3                     | 125            | 250             | $1.25     | $2.50      |
 | xAI        | grok-build-0.1               | 100            | 200             | $1.00     | $2.00      |
+| Moonshot   | kimi-k3                      | 300            | 1,500           | $3.00     | $15.00     |
 | Google     | gemini-3.1-pro               | 200            | 1,200           | $2.00     | $12.00     |
 | Google     | gemini-3.5-flash             | 150            | 900             | $1.50     | $9.00      |
 | Google     | gemini-3-flash               | 50             | 300             | $0.50     | $3.00      |
@@ -144,6 +145,9 @@ xAI prompts at or above 200,000 tokens use 2x input and output rates. Gemini
 GPT-5.6 cache writes are billed by aura-router at 1.25x the uncached input
 rate and cache reads at the discounted cached-input rate. Cache-aware usage
 is reported to z-billing as an explicit precomputed cost override.
+
+Kimi K3 cache hits are $0.30 per million input tokens. aura-router reports
+cache-aware K3 requests with the same explicit precomputed cost override.
 
 ## Cost Calculation
 
@@ -194,6 +198,7 @@ pub fn calculate_llm_cost(
 | xAI       | grok-4.5           | 1,000,000    | 500,000       | 1,000          | $10.00     |
 | xAI       | grok-4.3           | 1,000,000    | 500,000       | 500            | $5.00      |
 | xAI       | grok-build-0.1     | 1,000,000    | 500,000       | 400            | $4.00      |
+| Moonshot  | kimi-k3            | 1,000,000    | 500,000       | 1,050          | $10.50     |
 | Google    | gemini-2.5-flash   | 500,000      | 100,000       | 40             | $0.40      |
 | Unknown   | mystery-model      | 1,000,000    | 0             | 100            | $1.00      |
 

@@ -233,6 +233,51 @@ async fn report_xai_llm_usage_uses_grok_rates_and_provider() {
 }
 
 #[tokio::test]
+async fn report_moonshot_llm_usage_uses_kimi_k3_rates_and_provider() {
+    let harness = TestHarness::new();
+    create_funded_account(&harness, 10000).await;
+
+    let response = harness
+        .server
+        .post("/v1/usage")
+        .add_header("x-api-key", &harness.service_api_key)
+        .add_header("x-service-name", "aura-router")
+        .json(&json!({
+            "event_id": "evt_test_moonshot_kimi_k3",
+            "user_id": harness.test_user_id.to_string(),
+            "metric": {
+                "type": "llm_tokens",
+                "provider": "moonshot",
+                "model": "aura-kimi-k3",
+                "input_tokens": 1_000_000,
+                "output_tokens": 500_000
+            }
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    // Base K3 cost is 1,050 cents; the standard 20% LLM markup yields 1,260.
+    assert_eq!(body["cost_cents"], 1260);
+    assert_eq!(body["balance_cents"], 8740);
+
+    let event = harness
+        .store
+        .get_usage_event("evt_test_moonshot_kimi_k3")
+        .expect("load usage event")
+        .expect("usage event recorded");
+    match event.metric {
+        UsageMetric::LlmTokens {
+            provider, model, ..
+        } => {
+            assert_eq!(provider, LlmProvider::Moonshot);
+            assert_eq!(model, "aura-kimi-k3");
+        }
+        other => panic!("expected LLM usage metric, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn report_compute_usage_success() {
     let harness = TestHarness::new();
     create_funded_account(&harness, 10000).await;
