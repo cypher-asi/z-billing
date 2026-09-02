@@ -79,6 +79,14 @@ impl Default for PricingConfig {
             ModelKey::new("anthropic", "aura-claude-sonnet-5"),
             sonnet_5_pricing,
         );
+        for model in [
+            "claude-fable-5-1",
+            "aura-claude-fable-5-1",
+            "claude-mythos-5-1",
+            "aura-claude-mythos-5-1",
+        ] {
+            llm_pricing.insert(ModelKey::new("anthropic", model), fable_pricing.clone());
+        }
         llm_pricing.insert(
             ModelKey::new("anthropic", "claude-fable-5"),
             fable_pricing.clone(),
@@ -1051,6 +1059,19 @@ mod tests {
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("anthropic", "aura-claude-sonnet-5")));
+        for model in [
+            "claude-fable-5-1",
+            "aura-claude-fable-5-1",
+            "claude-mythos-5-1",
+            "aura-claude-mythos-5-1",
+        ] {
+            assert!(
+                config
+                    .llm_pricing
+                    .contains_key(&ModelKey::new("anthropic", model)),
+                "missing fallback pricing for {model}"
+            );
+        }
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("anthropic", "claude-fable-5")));
@@ -1230,6 +1251,35 @@ mod tests {
         // 5,000 output tokens = 25 credits
         let cost = config.calculate_llm_cost("anthropic", "aura-claude-fable-5", 10_000, 5_000);
         assert_eq!(cost, 35);
+    }
+
+    #[test]
+    fn calculate_llm_cost_claude_5_1_models_uses_published_base_rates() {
+        let config = PricingConfig::default();
+
+        for model in [
+            "claude-fable-5-1",
+            "aura-claude-fable-5-1",
+            "claude-mythos-5-1",
+            "aura-claude-mythos-5-1",
+        ] {
+            assert_eq!(
+                config.calculate_llm_cost("anthropic", model, 1_000_000, 1_000_000),
+                6_000,
+                "base cost mismatch for {model}"
+            );
+            assert_eq!(
+                config.calculate_llm_cost_for_zero_pro_user(
+                    "anthropic",
+                    model,
+                    1_000_000,
+                    1_000_000,
+                    false,
+                ),
+                7_200,
+                "marked-up cost mismatch for {model}"
+            );
+        }
     }
 
     #[test]

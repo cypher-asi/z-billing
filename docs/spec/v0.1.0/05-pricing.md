@@ -88,6 +88,8 @@ pub struct LlmPricing {
 
 | Provider   | Model                        | Input (per 1M) | Output (per 1M) | USD Input | USD Output |
 |------------|------------------------------|----------------|-----------------|-----------|------------|
+| Anthropic  | claude-fable-5-1             | 1,000          | 5,000           | $10.00    | $50.00     |
+| Anthropic  | claude-mythos-5-1            | 1,000          | 5,000           | $10.00    | $50.00     |
 | Anthropic  | claude-opus-5                | 500            | 2,500           | $5.00     | $25.00     |
 | Anthropic  | claude-sonnet-5              | 200            | 1,000           | $2.00     | $10.00     |
 | Anthropic  | claude-fable-5               | 1,000          | 5,000           | $10.00    | $50.00     |
@@ -134,6 +136,12 @@ pub struct LlmPricing {
 `*` The integer fallback rounds DeepSeek V4 Pro's $0.435 input rate to 44 Z
 credits per million. aura-router's normal detailed-cost path retains the exact
 provider price before rounding the final request debit.
+
+Claude Fable 5.1 and Claude Mythos 5.1 require at least 512 prompt tokens for
+prompt caching. Their cache reads are the Anthropic pricing exception at
+$0.25 per million tokens (0.025× base input); 5-minute and 1-hour cache writes
+cost $12.50 and $20 per million tokens. Aura Router supplies the cache-aware
+`cost_cents` override, while this table provides z-billing's uncached fallback.
 
 For GPT-5.6, GPT-5.5, and GPT-5.4, prompts above 272,000 input tokens price the
 entire request at 2x the input rate and 1.5x the output rate. The threshold
