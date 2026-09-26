@@ -57,6 +57,10 @@ impl Default for PricingConfig {
             input_credits_per_million: 500,   // $5.00 per 1M
             output_credits_per_million: 2500, // $25.00 per 1M
         };
+        let opus_5_5_pricing = LlmPricing {
+            input_credits_per_million: 400,   // $4.00 per 1M
+            output_credits_per_million: 2000, // $20.00 per 1M
+        };
         let fable_pricing = LlmPricing {
             input_credits_per_million: 1000,  // $10.00 per 1M
             output_credits_per_million: 5000, // $50.00 per 1M
@@ -94,6 +98,14 @@ impl Default for PricingConfig {
         llm_pricing.insert(
             ModelKey::new("anthropic", "aura-claude-fable-5"),
             fable_pricing,
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "claude-opus-5-5"),
+            opus_5_5_pricing.clone(),
+        );
+        llm_pricing.insert(
+            ModelKey::new("anthropic", "aura-claude-opus-5-5"),
+            opus_5_5_pricing,
         );
         llm_pricing.insert(
             ModelKey::new("anthropic", "claude-opus-5"),
@@ -192,8 +204,20 @@ impl Default for PricingConfig {
             output_credits_per_million: 3000,
         };
         let gpt_5_6_sol_pricing = LlmPricing {
-            input_credits_per_million: 500,
-            output_credits_per_million: 3000,
+            input_credits_per_million: 400,
+            output_credits_per_million: 2000,
+        };
+        let gpt_6_astra_pricing = LlmPricing {
+            input_credits_per_million: 1000,
+            output_credits_per_million: 5000,
+        };
+        let gpt_6_sol_pricing = LlmPricing {
+            input_credits_per_million: 200,
+            output_credits_per_million: 1000,
+        };
+        let gpt_6_luna_pricing = LlmPricing {
+            input_credits_per_million: 10,
+            output_credits_per_million: 50,
         };
         let gpt_5_6_terra_pricing = LlmPricing {
             input_credits_per_million: 200,
@@ -211,6 +235,15 @@ impl Default for PricingConfig {
             input_credits_per_million: 20,
             output_credits_per_million: 125,
         };
+        for model in ["gpt-6-astra", "openai/gpt-6-astra", "aura-gpt-6-astra"] {
+            llm_pricing.insert(ModelKey::new("openai", model), gpt_6_astra_pricing.clone());
+        }
+        for model in ["gpt-6-sol", "openai/gpt-6-sol", "aura-gpt-6-sol"] {
+            llm_pricing.insert(ModelKey::new("openai", model), gpt_6_sol_pricing.clone());
+        }
+        for model in ["gpt-6-luna", "openai/gpt-6-luna", "aura-gpt-6-luna"] {
+            llm_pricing.insert(ModelKey::new("openai", model), gpt_6_luna_pricing.clone());
+        }
         for model in [
             "gpt-5.6",
             "gpt-5.6-sol",
@@ -265,6 +298,13 @@ impl Default for PricingConfig {
         // xAI Grok chat models at vendor/base rates. Cache-aware usage can be
         // reported with precomputed cost_cents by aura-router; these base rates
         // cover quotes, reserves, and fallback usage calculation.
+        let grok_4_7_pricing = LlmPricing {
+            input_credits_per_million: 200,
+            output_credits_per_million: 600,
+        };
+        for model in ["aura-grok-4-7", "grok-4.7", "xai/grok-4.7"] {
+            llm_pricing.insert(ModelKey::new("xai", model), grok_4_7_pricing.clone());
+        }
         let grok_4_6_pricing = LlmPricing {
             input_credits_per_million: 200,
             output_credits_per_million: 600,
@@ -709,7 +749,9 @@ impl PricingConfig {
                 normalized_model,
                 "gpt-5.4" | "gpt-5.5" | "aura-gpt-5-4" | "aura-gpt-5-5"
             ) || normalized_model.starts_with("gpt-5.6")
-                || normalized_model.starts_with("aura-gpt-5-6-"));
+                || normalized_model.starts_with("aura-gpt-5-6-")
+                || normalized_model.starts_with("gpt-6")
+                || normalized_model.starts_with("aura-gpt-6-"));
         let xai_long = provider.eq_ignore_ascii_case("xai")
             && input_tokens >= XAI_LONG_CONTEXT_THRESHOLD
             && (normalized_model.starts_with("grok-")
@@ -1080,6 +1122,12 @@ mod tests {
             .contains_key(&ModelKey::new("anthropic", "aura-claude-fable-5")));
         assert!(config
             .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "claude-opus-5-5")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("anthropic", "aura-claude-opus-5-5")));
+        assert!(config
+            .llm_pricing
             .contains_key(&ModelKey::new("anthropic", "claude-opus-5")));
         assert!(config
             .llm_pricing
@@ -1104,10 +1152,25 @@ mod tests {
             .contains_key(&ModelKey::new("anthropic", "aura-claude-opus-5")));
         assert!(config
             .llm_pricing
+            .contains_key(&ModelKey::new("openai", "aura-gpt-6-astra")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("openai", "aura-gpt-6-sol")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("openai", "aura-gpt-6-luna")));
+        assert!(config
+            .llm_pricing
             .contains_key(&ModelKey::new("openai", "aura-gpt-5-4")));
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("openai", "aura-gpt-5-5")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("xai", "aura-grok-4-7")));
+        assert!(config
+            .llm_pricing
+            .contains_key(&ModelKey::new("xai", "grok-4.7")));
         assert!(config
             .llm_pricing
             .contains_key(&ModelKey::new("xai", "aura-grok-4-6")));
@@ -1243,6 +1306,30 @@ mod tests {
     }
 
     #[test]
+    fn calculate_llm_cost_claude_opus_5_5_uses_published_rates() {
+        let config = PricingConfig::default();
+
+        for model in ["claude-opus-5-5", "aura-claude-opus-5-5"] {
+            assert_eq!(
+                config.calculate_llm_cost("anthropic", model, 1_000_000, 1_000_000),
+                2_400,
+                "base cost mismatch for {model}"
+            );
+            assert_eq!(
+                config.calculate_llm_cost_for_zero_pro_user(
+                    "anthropic",
+                    model,
+                    1_000_000,
+                    1_000_000,
+                    false,
+                ),
+                2_880,
+                "marked-up cost mismatch for {model}"
+            );
+        }
+    }
+
+    #[test]
     fn calculate_llm_cost_claude_fable_5() {
         let config = PricingConfig::default();
 
@@ -1348,7 +1435,7 @@ mod tests {
 
         assert_eq!(
             config.calculate_llm_cost("openai", "aura-gpt-5-6-sol", 100_000, 100_000),
-            350
+            240
         );
         assert_eq!(
             config.calculate_llm_cost("openai", "gpt-5.6-terra", 100_000, 100_000),
@@ -1359,10 +1446,34 @@ mod tests {
             14
         );
 
-        // Sol long context: 1M input @ $10/M + 500k output @ $45/M.
+        // Sol long context: 1M input @ $8/M + 500k output @ $30/M.
         assert_eq!(
             config.calculate_llm_cost("openai", "gpt-5.6", 1_000_000, 500_000),
-            3_250
+            2_300
+        );
+    }
+
+    #[test]
+    fn calculate_llm_cost_gpt_6_family() {
+        let config = PricingConfig::default();
+
+        assert_eq!(
+            config.calculate_llm_cost("openai", "aura-gpt-6-astra", 100_000, 100_000),
+            600
+        );
+        assert_eq!(
+            config.calculate_llm_cost("openai", "openai/gpt-6-sol", 100_000, 100_000),
+            120
+        );
+        assert_eq!(
+            config.calculate_llm_cost("openai", "gpt-6-luna", 100_000, 100_000),
+            6
+        );
+
+        // GPT-6 uses the same published >272K 2x input / 1.5x output step.
+        assert_eq!(
+            config.calculate_llm_cost("openai", "gpt-6-sol", 1_000_000, 500_000),
+            1_150
         );
     }
 
@@ -1407,7 +1518,17 @@ mod tests {
     fn calculate_llm_cost_xai_grok_models() {
         let config = PricingConfig::default();
 
-        // Grok 4.6 uses $2/M input and $6/M output below 200K.
+        // Grok 4.7 uses $2/M input and $6/M output below 200K.
+        assert_eq!(
+            config.calculate_llm_cost("xai", "aura-grok-4-7", 100_000, 100_000),
+            80
+        );
+        assert_eq!(
+            config.calculate_llm_cost("xai", "xai/grok-4.7", 1_000_000, 500_000),
+            1_000
+        );
+
+        // Grok 4.6 retains the same rate card.
         assert_eq!(
             config.calculate_llm_cost("xai", "aura-grok-4-6", 100_000, 100_000),
             80
